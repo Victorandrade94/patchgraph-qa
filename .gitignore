@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv*/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+# Competition data: Kaggle rules forbid redistributing it. Never commit it.
+data/*
+!data/README.md
+kaggle.json
+.kaggle/
