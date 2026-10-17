@@ -38,9 +38,11 @@ measures them instead of assuming them.
 |---|---|---|
 | Data | Click *Add Input → Competition → gemma-4-developer-agent*. Files are mounted read-only; nothing to download. | Downloaded with the Kaggle CLI using your API token. Only `tasks.jsonl`, `graphs/`, `embeddings/` (not the 22 GB snapshots). |
 | Credentials | Not needed for the data | Colab Secret **`KAGGLE_API_TOKEN`** (new-style token from kaggle.com → Settings → API Tokens). Legacy `kaggle.json` is a fallback. |
-| Package | Upload `patchgraph-qa-day1.zip` as a private Kaggle Dataset, add it as input | Upload `patchgraph-qa-day1.zip` when asked |
+| Package | Upload `patchgraph-qa-day1.zip` as a private Kaggle Dataset, add it as input | Put `patchgraph-qa-day1.zip` in Google Drive → My Drive (newest copy is used) |
 
-The notebook auto-detects where it is running. **Never commit or share the competition data**
+The notebook auto-detects where it is running (Kaggle = `KAGGLE_KERNEL_RUN_TYPE` is set;
+Colab = `google.colab` loaded or `COLAB_RELEASE_TAG` set; a `/kaggle/input` folder alone means
+nothing, because Colab has one too). **Never commit or share the competition data**
 (the rules forbid redistribution).
 """)
 
@@ -50,8 +52,18 @@ import os
 import sys
 from pathlib import Path
 
-IN_COLAB = "google.colab" in sys.modules or os.path.exists("/content")
-IN_KAGGLE = os.path.exists("/kaggle/input")
+
+
+def detect_env(environ=os.environ, modules=sys.modules, kaggle_working="/kaggle/working"):
+    # Do NOT test for /kaggle/input: Colab now has that directory too (seen Oct 17 2026), which
+    # made this notebook think it was on Kaggle and skip auth, download and install.
+    # KAGGLE_KERNEL_RUN_TYPE is set only inside Kaggle notebooks.
+    in_kaggle = "KAGGLE_KERNEL_RUN_TYPE" in environ and os.access(kaggle_working, os.W_OK)
+    in_colab = not in_kaggle and ("google.colab" in modules or "COLAB_RELEASE_TAG" in environ)
+    return in_colab, in_kaggle
+
+
+IN_COLAB, IN_KAGGLE = detect_env()
 SLUG = "gemma-4-developer-agent"
 
 # The Kaggle mount path is not verified: older competitions mount at /kaggle/input/<slug>,
@@ -245,13 +257,16 @@ md(r"""
 """)
 
 code(r"""
+import fnmatch
 import importlib
 import os
 import shutil
 import sys
+import time
 import zipfile
 
 ZIP_NAME = "patchgraph-qa-day1.zip"
+ZIP_PATTERN = "patchgraph-qa-day1*.zip"  # Drive renames duplicates to "... (1).zip"
 
 
 def find_repo(extra_roots=()) -> Path | None:
@@ -264,24 +279,28 @@ def find_repo(extra_roots=()) -> Path | None:
     return None
 
 
-def find_zip(root: Path, name: str = ZIP_NAME, max_depth: int = 3) -> Path | None:
-    # Shallow breadth-first search: Drive is a slow network filesystem, so cap the depth
-    # and skip hidden/trash folders instead of globbing the whole Drive.
+def find_zip(root: Path, pattern: str = ZIP_PATTERN, max_depth: int = 3) -> Path | None:
+    # Shallow breadth-first search: Drive is a slow network filesystem, so cap the depth and
+    # skip hidden/trash folders instead of globbing the whole Drive. Among all matches
+    # (e.g. "patchgraph-qa-day1 (1).zip" after re-uploads) return the NEWEST by modified time.
+    found: list[Path] = []
     level = [Path(root)]
     for _depth in range(max_depth + 1):
         nxt = []
         for d in level:
             try:
-                entries = sorted(os.scandir(d), key=lambda e: e.name)
+                entries = list(os.scandir(d))
             except OSError:
                 continue
             for e in entries:
-                if e.name == name and e.is_file():
-                    return Path(e.path)
-            nxt += [Path(e.path) for e in entries
-                    if e.is_dir(follow_symlinks=False) and not e.name.startswith(".")]
+                if fnmatch.fnmatch(e.name, pattern) and e.is_file():
+                    found.append(Path(e.path))
+                elif e.is_dir(follow_symlinks=False) and not e.name.startswith("."):
+                    nxt.append(Path(e.path))
         level = nxt
-    return None
+    if not found:
+        return None
+    return max(found, key=lambda p: (p.stat().st_mtime, str(p)))
 
 
 def extract_repo(zip_path: Path, dest: Path) -> Path | None:
@@ -312,10 +331,10 @@ if IN_COLAB and not IN_KAGGLE:
         drive.mount("/content/drive")
         zp = find_zip(Path("/content/drive/MyDrive"))
         if zp is not None:
-            print("found", zp)
+            print("using newest match:", zp, "| modified", time.ctime(zp.stat().st_mtime))
             repo = extract_repo(zp, WORK)
         else:
-            print(f"{ZIP_NAME} not found in My Drive (searched 3 folders deep)")
+            print(f"{ZIP_PATTERN} not found in My Drive (searched 3 folders deep)")
     except Exception as exc:  # mount refused/failed: fall through to the other options
         print("Drive not used:", type(exc).__name__, exc)
     # 2) An already-unzipped copy.
@@ -365,7 +384,9 @@ from patchgraph_qa import io as pio
 from patchgraph_qa import patch_parse, questions, stats
 
 try:
-    candidates = [*KAGGLE_INPUT_CANDIDATES, str(DATA)]
+    # Colab may also have a /kaggle/input folder, so look at our own download folder first there.
+    kaggle_first = [*KAGGLE_INPUT_CANDIDATES, str(DATA)]
+    candidates = kaggle_first if IN_KAGGLE else kaggle_first[::-1]
 except NameError:  # analysis cells run on their own (tests or a fresh kernel)
     candidates = None
 DATA_ROOT = pio.find_data_root(candidates)

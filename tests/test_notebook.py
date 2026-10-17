@@ -4,6 +4,7 @@ analysis cells against the synthetic fixture data."""
 from __future__ import annotations
 
 import ast
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -87,7 +88,7 @@ def _install_helpers(tmp_path: Path, marker: str = "def find_zip") -> dict:
         n
         for n in tree.body  # keep source order: defaults like ZIP_NAME precede the defs
         if isinstance(n, (ast.Import, ast.ImportFrom, ast.FunctionDef))
-        or (isinstance(n, ast.Assign) and ast.unparse(n).startswith("ZIP_NAME"))
+        or (isinstance(n, ast.Assign) and ast.unparse(n).startswith("ZIP_"))
     ]
     ns: dict = {"Path": Path, "WORK": tmp_path / "work", "IN_KAGGLE": False}
     exec(compile(ast.Module(body=keep, type_ignores=[]), "<install-cell>", "exec"), ns)
@@ -107,11 +108,22 @@ def test_install_cell_prefers_drive_and_activates_src(tmp_path, monkeypatch):
     ns = _install_helpers(tmp_path)
     drive = tmp_path / "MyDrive"
     _make_zip(drive / "a" / "b" / ns["ZIP_NAME"])
+    _make_zip(drive / ns["ZIP_NAME"])  # older copy at top level, name sorts first
     _make_zip(drive / "x" / "y" / "z" / "w" / ns["ZIP_NAME"])  # too deep: ignored
     (drive / ".hidden").mkdir()
+    os.utime(drive / ns["ZIP_NAME"], (1_000, 1_000))
+    os.utime(drive / "a" / "b" / ns["ZIP_NAME"], (2_000, 2_000))
 
     zp = ns["find_zip"](drive)
-    assert zp == drive / "a" / "b" / ns["ZIP_NAME"]
+    assert zp == drive / "a" / "b" / ns["ZIP_NAME"]  # newest wins, not first/sorted name
+    # Drive's duplicate naming also matches, and a newer duplicate wins.
+    _make_zip(drive / "patchgraph-qa-day1 (1).zip")
+    os.utime(drive / "patchgraph-qa-day1 (1).zip", (3_000, 3_000))
+    _make_zip(drive / "other.zip")
+    os.utime(drive / "other.zip", (9_000, 9_000))
+    assert ns["find_zip"](drive) == drive / "patchgraph-qa-day1 (1).zip"
+    (drive / "patchgraph-qa-day1 (1).zip").unlink()
+    (drive / ns["ZIP_NAME"]).unlink()
     assert ns["find_zip"](drive, max_depth=1) is None
     assert ns["find_zip"](tmp_path / "missing") is None
 
@@ -173,3 +185,28 @@ def test_notebook_does_not_rely_on_listing_flags():
     src = "\n".join(c.source for c in _code_cells())
     assert "--page-size" not in src and "--csv" not in src
     assert "kaggle>=2.2" in src
+
+
+def test_kaggle_input_dir_alone_does_not_mean_kaggle(tmp_path, monkeypatch):
+    """Regression (Oct 17 2026): Colab has a /kaggle/input directory too."""
+    ns = _install_helpers(tmp_path, marker="def detect_env")
+    detect = ns["detect_env"]
+    writable = str(tmp_path)  # stands in for a writable /kaggle/working
+
+    # Pretend every path exists, including /kaggle/input: must not matter.
+    monkeypatch.setattr(os.path, "exists", lambda p: True)
+    monkeypatch.setattr(os.path, "isdir", lambda p: True)
+    colab_env = {"COLAB_RELEASE_TAG": "release-colab_20261001"}
+    assert detect(colab_env, {}, writable) == (True, False)
+    assert detect({}, {"google.colab": object()}, writable) == (True, False)
+    assert detect({}, {}, writable) == (False, False)  # plain local Jupyter
+
+    # Real Kaggle kernel: env var set and /kaggle/working writable. Never both flags at once.
+    kaggle_env = {"KAGGLE_KERNEL_RUN_TYPE": "Interactive", **colab_env}
+    assert detect(kaggle_env, {"google.colab": object()}, writable) == (False, True)
+    # Env var without a writable working dir is not trusted.
+    only_var = {"KAGGLE_KERNEL_RUN_TYPE": "Interactive"}
+    assert detect(only_var, {}, str(tmp_path / "missing")) == (False, False)
+
+    cell = next(c for c in _code_cells() if "def detect_env" in c.source).source
+    assert 'exists("/kaggle/input")' not in cell and "IN_COLAB, IN_KAGGLE = detect_env()" in cell

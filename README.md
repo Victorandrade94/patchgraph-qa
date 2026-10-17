@@ -68,7 +68,8 @@ New notebook → *Add Input* → Competition → `gemma-4-developer-agent`. The 
 **Option B: Google Colab.**
 1. kaggle.com → Settings → **API Tokens** → create a token.
 2. In Colab, key icon → add secret **`KAGGLE_API_TOKEN`** with the token, and enable notebook access.
-3. Put `patchgraph-qa-day1.zip` in Google Drive → My Drive (up to 3 folders deep). Open
+3. Put `patchgraph-qa-day1.zip` in Google Drive → My Drive (up to 3 folders deep; if there are
+   several `patchgraph-qa-day1*.zip`, the most recently modified one is used). Open
    `notebooks/01_explore_graphs.ipynb` and run all cells: it mounts Drive, finds and extracts the
    zip (browser upload is only a last-resort fallback), and adds `src/` to `sys.path` so no
    runtime restart is needed. It installs `kaggle>=2.2` and downloads **only** `tasks.jsonl`, `graphs/` and
