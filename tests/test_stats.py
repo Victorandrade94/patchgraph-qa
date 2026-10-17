@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from fixtures_data import COMMIT
 from patchgraph_qa import stats
 from patchgraph_qa.io import graph_from_node_link, load_embeddings
 
@@ -34,7 +35,7 @@ def test_degree_sequences(graph_json):
 
 def test_embedding_stats(data_dir, graph_json):
     g = graph_from_node_link(graph_json)
-    e = stats.embedding_stats(load_embeddings(data_dir / "embeddings" / "pkg_1.npz"), g)
+    e = stats.embedding_stats(load_embeddings(data_dir / "embeddings" / f"pkg_{COMMIT}.npz"), g)
     assert e.n_vectors == 8 and e.shapes == {"(256,)": 8} and e.dtypes == {"float32": 8}
     assert e.n_nodes_with_vector == 7 and e.n_vectors_without_node == 1
     assert e.examples_missing_vector == ["tests.test_core.test_helper"]

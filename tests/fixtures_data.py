@@ -61,3 +61,6 @@ GOLD_PATCH = (
     )
     + "\n"
 )
+
+#: base_commit of the synthetic task; real files are named f"{repo_short}_{base_commit}".
+COMMIT = "a" * 40

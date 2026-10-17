@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from fixtures_data import CORE_SRC, GOLD_PATCH
+from fixtures_data import COMMIT, CORE_SRC, GOLD_PATCH
 
 
 def node_link_graph_json() -> dict:
@@ -72,25 +72,26 @@ def graph_json() -> dict:
 
 @pytest.fixture()
 def data_dir(tmp_path: Path) -> Path:
-    """A fake data root: published/tasks.jsonl, graphs/, embeddings/."""
+    """A fake data root like the real one: published/tasks.jsonl, and graphs/ + embeddings/
+    named ``<repo_short>_<base_commit>`` (not by task id)."""
     (tmp_path / "published").mkdir()
     (tmp_path / "graphs").mkdir()
     (tmp_path / "embeddings").mkdir()
     task = {
         "instance_id": "pkg_1",
-        "repo": "owner/pkg",
-        "base_commit": "a" * 40,
+        "repo": "Owner/PKG",  # mixed case on purpose: file names use lowercase
+        "base_commit": COMMIT,
         "problem_statement": "helper is off by one",
         "hints_text": "",
         "patch": GOLD_PATCH,
         "test_patch": "",
         "created_at": "2024-01-01T00:00:00Z",
     }
-    partial = {"instance_id": "pkg_2", "repo": "owner/pkg", "patch": ""}  # missing fields
+    partial = {"instance_id": "pkg_2", "repo": "Owner/PKG", "patch": ""}  # missing fields
     (tmp_path / "published" / "tasks.jsonl").write_text(
         json.dumps(task) + "\n\n" + json.dumps(partial) + "\n", encoding="utf-8"
     )
-    (tmp_path / "graphs" / "pkg_1.json").write_text(
+    (tmp_path / "graphs" / f"pkg_{COMMIT}.json").write_text(
         json.dumps(node_link_graph_json()), encoding="utf-8"
     )
     rng = np.random.default_rng(0)
@@ -99,5 +100,5 @@ def data_dir(tmp_path: Path) -> Path:
         for n in node_link_graph_json()["nodes"][:-1]  # one node deliberately has no vector
     }
     vecs["ghost.symbol"] = rng.standard_normal(256).astype("float32")
-    np.savez(tmp_path / "embeddings" / "pkg_1.npz", **vecs)
+    np.savez(tmp_path / "embeddings" / f"pkg_{COMMIT}.npz", **vecs)
     return tmp_path

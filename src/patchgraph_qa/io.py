@@ -155,7 +155,7 @@ def graph_from_node_link(data: dict[str, Any]) -> nx.MultiDiGraph | nx.DiGraph |
 
 
 def load_graph(path: str | os.PathLike[str]) -> nx.MultiDiGraph | nx.DiGraph | nx.Graph:
-    """Load one graphs/<instance_id>.json file."""
+    """Load one graph file (real files are named ``graphs/<repo>_<base_commit>.json``)."""
     with open(path, encoding="utf-8") as fh:
         return graph_from_node_link(json.load(fh))
 
@@ -167,9 +167,64 @@ def load_embeddings(path: str | os.PathLike[str]) -> dict[str, np.ndarray]:
         return {key: npz[key] for key in npz.files}
 
 
-def graph_path(graphs_dir: str | os.PathLike[str], instance_id: str) -> Path:
-    return Path(graphs_dir) / f"{instance_id}.json"
+def repo_short(repo: str) -> str:
+    """``"fastapi/fastapi"`` -> ``"fastapi"``: last path part, lowercased (as in the listing)."""
+    return repo.strip().rstrip("/").split("/")[-1].lower()
 
 
-def embeddings_path(emb_dir: str | os.PathLike[str], instance_id: str) -> Path:
-    return Path(emb_dir) / f"{instance_id}.npz"
+def commit_key(task: Task) -> str | None:
+    """Real file stem for a task: ``f"{repo_short}_{base_commit}"`` (verified on the real data,
+    Oct 17 2026: e.g. ``graphs/fastapi_<base_commit>.json``). ``None`` if repo/commit is missing.
+
+    Several tasks can share one commit (129 tasks, 127 unique commits), so several tasks can
+    resolve to the same graph file.
+    """
+    if not task.repo or not task.base_commit:
+        return None
+    return f"{repo_short(task.repo)}_{task.base_commit}"
+
+
+def artifact_stems(task: Task | str) -> list[str]:
+    """Candidate file stems, in lookup order: the task id (data-page naming), then the commit key
+    (the naming the real files actually use)."""
+    if isinstance(task, str):
+        return [task]
+    stems = [task.instance_id] if task.instance_id else []
+    key = commit_key(task)
+    if key and key not in stems:
+        stems.append(key)
+    return stems
+
+
+def _resolve(folder: str | os.PathLike[str], task: Task | str, ext: str) -> Path:
+    candidates = [Path(folder) / f"{stem}{ext}" for stem in artifact_stems(task)]
+    for c in candidates:
+        if c.exists():
+            return c
+    # Nothing on disk: return the most likely name (commit key if known) so callers can
+    # check ``.exists()`` or report a useful path.
+    return candidates[-1] if candidates else Path(folder) / f"<unknown>{ext}"
+
+
+def graph_path(graphs_dir: str | os.PathLike[str], task: Task | str) -> Path:
+    """Path of a task's graph: ``<instance_id>.json`` if present, else ``<repo>_<commit>.json``.
+
+    Passing a bare string only tries that exact stem (kept for backwards compatibility).
+    """
+    return _resolve(graphs_dir, task, ".json")
+
+
+def embeddings_path(emb_dir: str | os.PathLike[str], task: Task | str) -> Path:
+    """Path of a task's embeddings, resolved like :func:`graph_path` (``.npz``)."""
+    return _resolve(emb_dir, task, ".npz")
+
+
+embedding_path = embeddings_path
+
+
+def download_names(tasks: Iterable[Task]) -> list[str]:
+    """Competition file names to fetch with ``kaggle competitions download -f``, built from
+    tasks' repo + base_commit (the CLI listing is paged and cannot be relied on). Sorted, unique.
+    """
+    keys = sorted({k for t in tasks if (k := commit_key(t))})
+    return [f"graphs/{k}.json" for k in keys] + [f"embeddings/{k}.npz" for k in keys]

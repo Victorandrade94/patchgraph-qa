@@ -71,7 +71,7 @@ New notebook → *Add Input* → Competition → `gemma-4-developer-agent`. The 
 3. Put `patchgraph-qa-day1.zip` in Google Drive → My Drive (up to 3 folders deep). Open
    `notebooks/01_explore_graphs.ipynb` and run all cells: it mounts Drive, finds and extracts the
    zip (browser upload is only a last-resort fallback), and adds `src/` to `sys.path` so no
-   runtime restart is needed. It installs `kaggle>=1.8.0` and downloads **only** `tasks.jsonl`, `graphs/` and
+   runtime restart is needed. It installs `kaggle>=2.2` and downloads **only** `tasks.jsonl`, `graphs/` and
    `embeddings/`, one file at a time (the 22 GB snapshots and wheels are skipped).
    Fallbacks: legacy secrets `KAGGLE_USERNAME` + `KAGGLE_KEY`, or uploading `kaggle.json`.
 
@@ -79,10 +79,21 @@ Do not `import kaggle` in Python while relying on `KAGGLE_API_TOKEN`: the librar
 variable on import ([kaggle-cli#882](https://github.com/Kaggle/kaggle-cli/issues/882)). The
 notebook only uses `!kaggle ...` shell calls.
 
-**Option C: your own machine.** `pip install "kaggle>=1.8.0"`, `export KAGGLE_API_TOKEN=...`,
+**Option C: your own machine.** `pip install "kaggle>=2.2"`, `export KAGGLE_API_TOKEN=...`,
 then `kaggle competitions download gemma-4-developer-agent -f tasks.jsonl -p data` (and the same
-per file for `graphs/<id>.json`, `embeddings/<id>.npz`). Point the code at it with
+per file for `graphs/<repo>_<base_commit>.json`, `embeddings/<repo>_<base_commit>.npz`; get the
+list with `patchgraph_qa.io.download_names(tasks)`). Point the code at it with
 `PGQA_DATA_DIR=data`.
+
+## Verified on the real data (Oct 17, 2026, kaggle CLI 2.0.2)
+
+- `tasks.jsonl` has 129 tasks (e.g. `fastapi_15661`), covering 127 unique commits.
+- Graphs and embeddings are named by **repo + commit**, not task id:
+  `graphs/<repo_short>_<base_commit>.json`, `embeddings/<repo_short>_<base_commit>.npz`
+  (`repo_short` = last part of `task.repo`, lowercased). 127 embedding files exist.
+  `download -f graphs/<instance_id>.json` returns 404.
+- `kaggle competitions files` output is paged/incomplete (195 of ~254 with `--page-size 1000`),
+  so file names are built from `tasks.jsonl` instead.
 
 ## Unverified facts (measured by notebook 01, section 11)
 
@@ -91,7 +102,6 @@ per file for `graphs/<id>.json`, `embeddings/<id>.npz`). Point the code at it wi
 - Whether async calls are missing edges (hosts posted a "Note on Code Graphs for Async Functions").
 - Edge types other than `calls`; whether nodes carry file/line spans.
 - Graph sizes and the disk size of `graphs/` + `embeddings/`.
-- Exact CLI listing format/pagination of `kaggle competitions files`.
 - Whether a derived QA dataset may be published (ask in the paper-track forum).
 
 ## Roadmap (Oct 17–25, light hours)

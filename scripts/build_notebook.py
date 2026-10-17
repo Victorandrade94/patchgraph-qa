@@ -64,7 +64,8 @@ print(f"IN_COLAB={IN_COLAB}  IN_KAGGLE={IN_KAGGLE}  WORK={WORK}")
 md(r"""
 ## 1 · Install the Kaggle CLI and authenticate (Colab only)
 
-The new-style token needs `kaggle>=1.8.0`. We put the token in the `KAGGLE_API_TOKEN`
+The new-style token needs `kaggle>=1.8.0`; we pin `kaggle>=2.2` (2.0.2 was used in the first
+real run). We put the token in the `KAGGLE_API_TOKEN`
 environment variable and call the CLI with `!kaggle ...`.
 
 ⚠️ Do **not** `import kaggle` in this notebook: on import the library authenticates and then
@@ -75,7 +76,7 @@ every later `!kaggle` call. Shell calls are separate processes, so they are unaf
 code(r"""
 if IN_COLAB and not IN_KAGGLE:
     # -q keeps the output short; the version check below proves which CLI we got.
-    !pip install -q "kaggle>=1.8.0"
+    !pip install -q "kaggle>=2.2"
     !kaggle --version
 """, "setup")
 
@@ -126,17 +127,14 @@ print("Auth:", AUTH)
 """, "setup")
 
 md(r"""
-## 2 · List the competition files (Colab only)
+## 2 · Peek at the competition file listing (Colab only, informational)
 
-The data page lists 524 files. The CLI listing may be **paginated**, so we ask for CSV output
-with a large page size and count what we got. If the listing looks incomplete we do not
-guess file names from it; instead step 3 builds names from `tasks.jsonl` using the naming
-scheme on the data page (`graphs/<instance_id>.json`, `embeddings/<instance_id>.npz`).
+Verified on the real data (Oct 17 2026, kaggle CLI 2.0.2): the listing is **paged and
+incomplete** (195 of ~254 entries came back with `--page-size 1000`), so nothing below depends on
+it. We only print the first page to eyeball the naming.
 """)
 
 code(r"""
-import csv
-import io as _io
 import subprocess
 
 DATA = WORK / "data"
@@ -146,36 +144,63 @@ def kaggle_cli(*args: str) -> subprocess.CompletedProcess:
     # Inherits KAGGLE_API_TOKEN from this kernel's environment.
     return subprocess.run(["kaggle", *args], capture_output=True, text=True)
 
-listed: list[str] = []
 if IN_COLAB and not IN_KAGGLE:
-    res = kaggle_cli("competitions", "files", SLUG, "--csv", "--page-size", "1000")
-    if res.returncode != 0:  # older flags/format: show raw output instead of guessing
-        print("CSV listing failed:", res.stderr[-500:])
-        res = kaggle_cli("competitions", "files", SLUG)
-        print(res.stdout[:3000])
-    else:
-        rows = list(csv.DictReader(_io.StringIO(res.stdout)))
-        listed = [r.get("name") or r.get("ref") or "" for r in rows]
-        print(f"Listed {len(listed)} files (data page says 524).")
-        for prefix in ("tasks", "graphs/", "embeddings/", "snapshots/", "wheels/"):
-            print(f"  {prefix:<12}", sum(1 for n in listed if n.startswith(prefix)))
-        print("First names:", listed[:8])
+    res = kaggle_cli("competitions", "files", SLUG)
+    print(res.stdout[:2000] or res.stderr[-500:])
 """, "setup")
 
 md(r"""
 ## 3 · Download ONLY `tasks.jsonl`, `graphs/`, `embeddings/` (Colab only)
 
-`kaggle competitions download -f <name>` fetches **one file at a time**; whole-folder download
-with `-f` is not documented, so we loop over files (≈260 calls, roughly 10–20 minutes; files
-already downloaded are skipped, so you can re-run after a disconnect).
+Verified on the real data: graph and embedding files are named by **repository + commit**, not
+by task id: `graphs/<repo>_<base_commit>.json`, `embeddings/<repo>_<base_commit>.npz`, where
+`<repo>` is the last part of `task.repo`, lowercased (e.g. `fastapi`).
+`download -f graphs/<instance_id>.json` returns 404. So we build the names from `tasks.jsonl`
+directly (129 tasks → 127 unique commits) and fetch them **one file at a time**
+(≈254 calls, roughly 10–20 minutes; files already on disk are skipped, so re-running after a
+disconnect resumes). Single files are sometimes served zipped; those are unpacked.
 
 **Fallbacks if this fails:** (a) use the Kaggle-notebook route (no download at all), or
-(b) download only a few graphs by hand from the Data tab. Do **not** download the full 22 GB
-archive into Colab.
+(b) download a few graphs by hand from the Data tab. Do **not** download the full 22 GB archive
+into Colab.
 """)
 
 code(r"""
+import json
+import shutil
+import tempfile
 import zipfile
+
+
+def repo_short(repo: str) -> str:
+    # Must match patchgraph_qa.io.repo_short (the package is not installed yet at this point).
+    return repo.strip().rstrip("/").split("/")[-1].lower()
+
+
+def names_from_tasks(tasks_file: Path) -> list[str]:
+    # Same result as patchgraph_qa.io.download_names: unique repo+commit keys, graphs then embeddings.
+    keys = set()
+    for line in open(tasks_file, encoding="utf-8"):
+        if line.strip():
+            rec = json.loads(line)
+            if rec.get("repo") and rec.get("base_commit"):
+                keys.add(f"{repo_short(rec['repo'])}_{rec['base_commit']}")
+    keys = sorted(keys)
+    return [f"graphs/{k}.json" for k in keys] + [f"embeddings/{k}.npz" for k in keys]
+
+
+def unpack_zips(dest_dir: Path, base: str, before: set) -> None:
+    # The API may serve one file as <base>.zip (or another new .zip); unzip it so that
+    # dest_dir/<base> exists, wherever inside the archive the file sits.
+    for z in sorted(set(dest_dir.glob("*.zip")) - before):
+        with tempfile.TemporaryDirectory() as tmp:
+            with zipfile.ZipFile(z) as zf:
+                zf.extractall(tmp)
+            hits = [p for p in Path(tmp).rglob(base) if p.is_file()]
+            if hits:
+                shutil.move(str(hits[0]), dest_dir / base)
+        z.unlink()
+
 
 def download_one(name: str, dest_dir: Path) -> Path | None:
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -183,41 +208,27 @@ def download_one(name: str, dest_dir: Path) -> Path | None:
     target = dest_dir / base
     if target.exists():
         return target
+    before = set(dest_dir.glob("*.zip"))
     res = kaggle_cli("competitions", "download", SLUG, "-f", name, "-p", str(dest_dir), "-q")
-    zipped = dest_dir / (base + ".zip")
-    if zipped.exists():  # the API sometimes serves single files zipped
-        with zipfile.ZipFile(zipped) as zf:
-            zf.extractall(dest_dir)
-        zipped.unlink()
+    unpack_zips(dest_dir, base, before)
     if not target.exists():
-        print(f"  could not download {name}: {res.stderr.strip()[-300:]}")
+        print(f"  could not download {name}: {(res.stderr or res.stdout).strip()[-300:]}")
         return None
     return target
 
+
 if IN_COLAB and not IN_KAGGLE:
-    # tasks.jsonl: the data page mentions both "tasks.jsonl" and "published/tasks.jsonl".
-    tasks_candidates = [n for n in listed if n.endswith("tasks.jsonl")] or [
-        "tasks.jsonl", "published/tasks.jsonl"]
-    for name in tasks_candidates:
+    # tasks.jsonl: verified to download as "tasks.jsonl"; "published/tasks.jsonl" kept as fallback.
+    for name in ("tasks.jsonl", "published/tasks.jsonl"):
         if download_one(name, DATA):
             print("tasks file:", name)
             break
-
-    import json
-    ids = [json.loads(line)["instance_id"]
-           for line in open(DATA / "tasks.jsonl", encoding="utf-8") if line.strip()]
-    print(len(ids), "task ids")
-
-    def names_for(folder: str, ext: str) -> list[str]:
-        from_listing = [n for n in listed if n.startswith(folder + "/") and n.endswith(ext)]
-        # Task-named files only (the commit-named copies are hard links of the same data).
-        wanted = {f"{folder}/{i}{ext}" for i in ids}
-        return sorted(set(from_listing) & wanted) or sorted(wanted)
-
-    for folder, ext in (("graphs", ".json"), ("embeddings", ".npz")):
-        names = names_for(folder, ext)
-        ok = sum(download_one(n, DATA / folder) is not None for n in names)
-        print(f"{folder}: {ok}/{len(names)} downloaded")
+    names = names_from_tasks(DATA / "tasks.jsonl")
+    print(len(names) // 2, "unique repo+commit keys, e.g.", names[:1])
+    for folder in ("graphs", "embeddings"):
+        todo = [n for n in names if n.startswith(folder + "/")]
+        ok = sum(download_one(n, DATA / folder) is not None for n in todo)
+        print(f"{folder}: {ok}/{len(todo)} downloaded")
 """, "setup")
 
 md(r"""
@@ -382,9 +393,10 @@ The data page documents node fields `id`, `name`, `text` and edge fields `source
 """)
 
 code(r"""
-first = next(t for t in tasks if (GRAPHS_DIR / f"{t.instance_id}.json").exists())
-g0 = pio.load_graph(pio.graph_path(GRAPHS_DIR, first.instance_id))
-print("task:", first.instance_id, "| repo:", first.repo)
+# Files are named <repo>_<base_commit>; graph_path tries the task id first, then that key.
+first = next(t for t in tasks if pio.graph_path(GRAPHS_DIR, t).exists())
+g0 = pio.load_graph(pio.graph_path(GRAPHS_DIR, first))
+print("task:", first.instance_id, "| repo:", first.repo, "| file:", pio.graph_path(GRAPHS_DIR, first).name)
 print("directed:", g0.is_directed(), "| multigraph:", g0.is_multigraph())
 print("nodes:", g0.number_of_nodes(), "| edges:", g0.number_of_edges())
 print("node attribute keys (key: #nodes):", dict(stats.node_attr_key_counts(g0)))
@@ -440,7 +452,7 @@ least one graph symbol was matched. Without snapshot source we can only use the 
 code(r"""
 rows = []
 for t in tasks:
-    gp = pio.graph_path(GRAPHS_DIR, t.instance_id)
+    gp = pio.graph_path(GRAPHS_DIR, t)  # several tasks may share one commit graph
     if not gp.exists():
         continue
     g = pio.load_graph(gp)
@@ -498,7 +510,7 @@ plt.show()
 md("## 9 · Embeddings: shape, dtype, and alignment with graph node ids")
 
 code(r"""
-ep = pio.embeddings_path(EMB_DIR, first.instance_id) if EMB_DIR else None
+ep = pio.embeddings_path(EMB_DIR, first) if EMB_DIR else None
 if ep is not None and ep.exists():
     emb = pio.load_embeddings(ep)
     es = stats.embedding_stats(emb, g0)

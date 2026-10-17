@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from fixtures_data import COMMIT
+
 ROOT = Path(__file__).resolve().parents[1]
 NB = ROOT / "notebooks" / "01_explore_graphs.ipynb"
 nbformat = pytest.importorskip("nbformat")
@@ -77,9 +79,9 @@ def test_analysis_cells_run_on_synthetic_data(data_dir, monkeypatch):
     assert any("Embedding model" in item for item, _ in ns["checklist"])
 
 
-def _install_helpers(tmp_path: Path) -> dict:
-    """Exec only the imports and function defs of the install cell (no Drive, no pip)."""
-    cell = next(c for c in _code_cells() if "def find_zip" in c.source)
+def _install_helpers(tmp_path: Path, marker: str = "def find_zip") -> dict:
+    """Exec only the imports and function defs of one setup cell (no Drive, no pip, no CLI)."""
+    cell = next(c for c in _code_cells() if marker in c.source)
     tree = ast.parse(_strip_magics(cell.source))
     keep = [
         n
@@ -137,3 +139,37 @@ def test_install_cell_prefers_drive_and_activates_src(tmp_path, monkeypatch):
         for m in [m for m in sys.modules if m.startswith("patchgraph_qa")]:
             del sys.modules[m]
         sys.modules.update(saved)
+
+
+def test_download_cell_builds_commit_names_and_unzips(data_dir, tmp_path):
+    from patchgraph_qa import io
+
+    ns = _install_helpers(tmp_path, marker="def names_from_tasks")
+    tasks_file = data_dir / "published" / "tasks.jsonl"
+    names = ns["names_from_tasks"](tasks_file)
+    # Same names as the package helper, and commit-named (not task-id-named).
+    assert names == io.download_names(io.load_tasks(tasks_file))
+    assert names == [f"graphs/pkg_{COMMIT}.json", f"embeddings/pkg_{COMMIT}.npz"]
+
+    # Simulate the CLI serving a file wrapped in a zip (with a folder inside the archive).
+    import zipfile
+
+    def fake_cli(*args):
+        name, dest = args[args.index("-f") + 1], Path(args[args.index("-p") + 1])
+        with zipfile.ZipFile(dest / (name.split("/")[-1] + ".zip"), "w") as zf:
+            zf.writestr(name, "{}")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    ns.update(kaggle_cli=fake_cli, SLUG="slug")
+    out = ns["download_one"](names[0], tmp_path / "dl" / "graphs")
+    assert out == tmp_path / "dl" / "graphs" / f"pkg_{COMMIT}.json" and out.read_text() == "{}"
+    assert not list((tmp_path / "dl" / "graphs").glob("*.zip"))
+    # Already on disk: skipped without calling the CLI.
+    ns["kaggle_cli"] = lambda *a: pytest.fail("should not download again")
+    assert ns["download_one"](names[0], tmp_path / "dl" / "graphs") == out
+
+
+def test_notebook_does_not_rely_on_listing_flags():
+    src = "\n".join(c.source for c in _code_cells())
+    assert "--page-size" not in src and "--csv" not in src
+    assert "kaggle>=2.2" in src
