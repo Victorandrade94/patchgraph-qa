@@ -172,6 +172,10 @@ directly (129 tasks → 127 unique commits) and fetch them **one file at a time*
 (≈254 calls, roughly 10–20 minutes; files already on disk are skipped, so re-running after a
 disconnect resumes). Single files are sometimes served zipped; those are unpacked.
 
+Kaggle **rate-limits** this (seen: `429 Too Many Requests` on embeddings). The loop pauses ~1 s
+after each file and, on a 429, retries up to 6 times waiting 5, 10, 20, 40, 60 s. At the end it
+lists anything still missing: just **re-run the cell** (wait a few minutes if 429s persist).
+
 **Fallbacks if this fails:** (a) use the Kaggle-notebook route (no download at all), or
 (b) download a few graphs by hand from the Data tab. Do **not** download the full 22 GB archive
 into Colab.
@@ -181,6 +185,7 @@ code(r"""
 import json
 import shutil
 import tempfile
+import time
 import zipfile
 
 
@@ -214,19 +219,47 @@ def unpack_zips(dest_dir: Path, base: str, before: set) -> None:
         z.unlink()
 
 
+PAUSE_S = 1.0  # polite pause after every real download (Kaggle rate-limits: HTTP 429)
+BACKOFF_S = (5, 10, 20, 40, 60)  # waits before retries 2..6 when Kaggle answers 429
+SLEEP = time.sleep  # replaced in tests
+
+
+def is_rate_limited(res: subprocess.CompletedProcess) -> bool:
+    out = f"{res.stdout}\n{res.stderr}"
+    return "429" in out or "Too Many Requests" in out
+
+
 def download_one(name: str, dest_dir: Path) -> Path | None:
     dest_dir.mkdir(parents=True, exist_ok=True)
     base = name.split("/")[-1]
     target = dest_dir / base
     if target.exists():
-        return target
-    before = set(dest_dir.glob("*.zip"))
-    res = kaggle_cli("competitions", "download", SLUG, "-f", name, "-p", str(dest_dir), "-q")
-    unpack_zips(dest_dir, base, before)
-    if not target.exists():
-        print(f"  could not download {name}: {(res.stderr or res.stdout).strip()[-300:]}")
-        return None
-    return target
+        return target  # already there: no request, no pause
+    for attempt in range(len(BACKOFF_S) + 1):
+        before = set(dest_dir.glob("*.zip"))
+        res = kaggle_cli("competitions", "download", SLUG, "-f", name, "-p", str(dest_dir), "-q")
+        unpack_zips(dest_dir, base, before)
+        if target.exists():
+            SLEEP(PAUSE_S)
+            return target
+        if not is_rate_limited(res) or attempt == len(BACKOFF_S):
+            break
+        wait = BACKOFF_S[attempt]
+        print(f"  429 rate limit on {name}: retry {attempt + 2}/{len(BACKOFF_S) + 1} in {wait}s")
+        SLEEP(wait)
+    print(f"  could not download {name}: {(res.stderr or res.stdout).strip()[-300:]}")
+    return None
+
+
+def download_all(names: list[str], data_dir: Path) -> list[str]:
+    # Download names into data_dir/<folder>/; return the ones still missing.
+    missing = []
+    for folder in ("graphs", "embeddings"):
+        todo = [n for n in names if n.startswith(folder + "/")]
+        got = [n for n in todo if download_one(n, data_dir / folder) is not None]
+        missing += [n for n in todo if n not in got]
+        print(f"{folder}: {len(got)}/{len(todo)} on disk")
+    return missing
 
 
 if IN_COLAB and not IN_KAGGLE:
@@ -237,10 +270,15 @@ if IN_COLAB and not IN_KAGGLE:
             break
     names = names_from_tasks(DATA / "tasks.jsonl")
     print(len(names) // 2, "unique repo+commit keys, e.g.", names[:1])
-    for folder in ("graphs", "embeddings"):
-        todo = [n for n in names if n.startswith(folder + "/")]
-        ok = sum(download_one(n, DATA / folder) is not None for n in todo)
-        print(f"{folder}: {ok}/{len(todo)} downloaded")
+    MISSING = download_all(names, DATA)
+    if MISSING:
+        print(f"\n{len(MISSING)} file(s) still missing:")
+        for n in MISSING:
+            print("  ", n)
+        print("Re-run THIS cell to fetch them (files already on disk are skipped). If Kaggle keeps")
+        print("answering 429, wait a few minutes first.")
+    else:
+        print("\nAll graph and embedding files are on disk.")
 """, "setup")
 
 md(r"""
@@ -248,8 +286,9 @@ md(r"""
 
 * **Colab (recommended):** put `patchgraph-qa-day1.zip` anywhere in **Google Drive → My Drive**
   (top level or a few folders deep). The cell mounts Drive, finds the zip, and extracts it to
-  `/content`. Only if no zip is found does it fall back to `files.upload()` (which can hang in
-  some browsers). An unzipped folder at `/content/patchgraph-qa` also works.
+  `/content`. If the mount fails it prints what to do and stops; the browser upload
+  (`files.upload()`, which hangs in some browsers) is used only if you set `USE_UPLOAD = True`.
+  An unzipped folder at `/content/patchgraph-qa` also works.
 * **Kaggle:** create a private Dataset from `patchgraph-qa-day1.zip`, then *Add Input* it; the
   cell finds it under `/kaggle/input/`.
 * After installing, the cell puts `<repo>/src` on `sys.path` so the import works **without
@@ -323,26 +362,51 @@ def activate_src(repo: Path) -> None:
     importlib.invalidate_caches()
 
 
+USE_UPLOAD = False  # set True to fall back to the browser upload (it hangs in some browsers)
+DRIVE = Path("/content/drive")
+MOUNT_HELP = "\n".join([
+    "Google Drive could not be mounted. To fix:",
+    "  1. Re-run this cell. In the Google popup pick your account and allow ALL requested",
+    "     permissions ('Select all'); leaving some unticked makes the mount fail.",
+    "  2. If it still fails: Runtime > Disconnect and delete runtime, then run all cells again.",
+    "  3. Or copy patchgraph-qa-day1.zip to /content by hand (Files sidebar), run",
+    "     !unzip -q -o /content/patchgraph-qa-day1.zip -d /content   then re-run this cell.",
+    "  4. Or set USE_UPLOAD = True at the top of this cell to use the browser upload instead.",
+])
+
+
+def mount_drive(mount_point: Path = DRIVE) -> bool:
+    if (mount_point / "MyDrive").is_dir():
+        print("Drive already mounted at", mount_point)
+        return True
+    try:
+        from google.colab import drive
+
+        drive.mount(str(mount_point), force_remount=True)
+    except Exception as exc:
+        print("Drive mount failed:", type(exc).__name__, exc)
+        print(MOUNT_HELP)
+        return False
+    return (mount_point / "MyDrive").is_dir()
+
+
 repo = None
 if IN_COLAB and not IN_KAGGLE:
     # 1) Google Drive first.
-    try:
-        from google.colab import drive
-        drive.mount("/content/drive")
-        zp = find_zip(Path("/content/drive/MyDrive"))
+    if mount_drive():
+        zp = find_zip(DRIVE / "MyDrive")
         if zp is not None:
             print("using newest match:", zp, "| modified", time.ctime(zp.stat().st_mtime))
             repo = extract_repo(zp, WORK)
         else:
             print(f"{ZIP_PATTERN} not found in My Drive (searched 3 folders deep)")
-    except Exception as exc:  # mount refused/failed: fall through to the other options
-        print("Drive not used:", type(exc).__name__, exc)
-    # 2) An already-unzipped copy.
+    # 2) An already-unzipped copy (e.g. unzipped by hand into /content).
     if repo is None:
         repo = find_repo()
-    # 3) Last resort: browser upload (may hang in some browsers).
-    if repo is None:
+    # 3) Browser upload only when explicitly requested.
+    if repo is None and USE_UPLOAD:
         from google.colab import files
+
         print(f"Upload {ZIP_NAME}")
         for fname in files.upload():
             if fname.endswith(".zip"):
@@ -363,7 +427,8 @@ if repo is not None:
     import patchgraph_qa
     print("patchgraph_qa", patchgraph_qa.__version__, "from", patchgraph_qa.__file__)
 else:
-    print("patchgraph-qa not found: see the instructions above this cell.")
+    # Stop "Run all" here instead of failing confusingly in later cells.
+    raise RuntimeError("patchgraph-qa not found: see the instructions printed above / above this cell.")
 """, "setup")
 
 md(r"""

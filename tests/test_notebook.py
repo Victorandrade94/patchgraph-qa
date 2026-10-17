@@ -88,7 +88,11 @@ def _install_helpers(tmp_path: Path, marker: str = "def find_zip") -> dict:
         n
         for n in tree.body  # keep source order: defaults like ZIP_NAME precede the defs
         if isinstance(n, (ast.Import, ast.ImportFrom, ast.FunctionDef))
-        or (isinstance(n, ast.Assign) and ast.unparse(n).startswith("ZIP_"))
+        or (  # UPPER_CASE constants such as ZIP_NAME, BACKOFF_S, MOUNT_HELP
+            isinstance(n, ast.Assign)
+            and all(isinstance(t, ast.Name) and t.id.isupper() for t in n.targets)
+            and "IN_" not in ast.unparse(n.value)  # skip values that depend on the runtime
+        )
     ]
     ns: dict = {"Path": Path, "WORK": tmp_path / "work", "IN_KAGGLE": False}
     exec(compile(ast.Module(body=keep, type_ignores=[]), "<install-cell>", "exec"), ns)
@@ -172,7 +176,7 @@ def test_download_cell_builds_commit_names_and_unzips(data_dir, tmp_path):
             zf.writestr(name, "{}")
         return subprocess.CompletedProcess(args, 0, "", "")
 
-    ns.update(kaggle_cli=fake_cli, SLUG="slug")
+    ns.update(kaggle_cli=fake_cli, SLUG="slug", SLEEP=lambda s: None)
     out = ns["download_one"](names[0], tmp_path / "dl" / "graphs")
     assert out == tmp_path / "dl" / "graphs" / f"pkg_{COMMIT}.json" and out.read_text() == "{}"
     assert not list((tmp_path / "dl" / "graphs").glob("*.zip"))
@@ -210,3 +214,71 @@ def test_kaggle_input_dir_alone_does_not_mean_kaggle(tmp_path, monkeypatch):
 
     cell = next(c for c in _code_cells() if "def detect_env" in c.source).source
     assert 'exists("/kaggle/input")' not in cell and "IN_COLAB, IN_KAGGLE = detect_env()" in cell
+
+
+def test_download_retries_429_with_backoff_then_reports_missing(tmp_path, capsys):
+    ns = _install_helpers(tmp_path, marker="def names_from_tasks")
+    waits: list[float] = []
+    calls: dict[str, int] = {}
+
+    def fake_cli(*args):
+        name, dest = args[args.index("-f") + 1], Path(args[args.index("-p") + 1])
+        calls[name] = calls.get(name, 0) + 1
+        if name.endswith("ok.npz") and calls[name] >= 3:  # succeeds on the 3rd try
+            (dest / "ok.npz").write_text("x")
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if name.endswith("gone.npz"):  # not a rate limit: no retries
+            return subprocess.CompletedProcess(args, 1, "", "404 Client Error: Not Found")
+        return subprocess.CompletedProcess(args, 1, "", "429 Client Error: Too Many Requests")
+
+    ns.update(kaggle_cli=fake_cli, SLUG="slug", SLEEP=waits.append)
+    names = ["embeddings/ok.npz", "embeddings/limited.npz", "embeddings/gone.npz"]
+    missing = ns["download_all"](names, tmp_path / "d")
+
+    assert missing == ["embeddings/limited.npz", "embeddings/gone.npz"]
+    assert calls == {"embeddings/ok.npz": 3, "embeddings/limited.npz": 6, "embeddings/gone.npz": 1}
+    # ok: 5, 10, then the 1 s pause; limited: the full ladder; gone: nothing.
+    assert waits == [5, 10, ns["PAUSE_S"], 5, 10, 20, 40, 60]
+    assert "429 rate limit" in capsys.readouterr().out
+
+    # Re-run: files on disk are skipped without any request or pause.
+    waits.clear()
+    ns["kaggle_cli"] = lambda *a: pytest.fail("should not request an existing file")
+    assert ns["download_one"]("embeddings/ok.npz", tmp_path / "d" / "embeddings") is not None
+    assert waits == []
+
+    cell = next(c for c in _code_cells() if "def download_all" in c.source).source
+    assert "Re-run THIS cell" in cell
+
+
+def test_drive_mount_skip_failure_and_no_auto_upload(tmp_path, monkeypatch, capsys):
+    ns = _install_helpers(tmp_path)
+    mounted = tmp_path / "drive"
+    (mounted / "MyDrive").mkdir(parents=True)
+    assert ns["mount_drive"](mounted) is True  # already mounted: google.colab never touched
+    assert "already mounted" in capsys.readouterr().out
+
+    # Mount raising (like Colab's "ValueError: mount failed") prints help and returns False.
+    import types
+
+    calls = []
+
+    def bad_mount(path, force_remount=False):
+        calls.append((path, force_remount))
+        raise ValueError("mount failed")
+
+    colab = types.ModuleType("google.colab")
+    colab.drive = types.SimpleNamespace(mount=bad_mount)
+    google = types.ModuleType("google")
+    google.colab = colab
+    monkeypatch.setitem(sys.modules, "google", sys.modules.get("google", google))
+    monkeypatch.setitem(sys.modules, "google.colab", colab)
+    assert ns["mount_drive"](tmp_path / "nodrive") is False
+    assert calls == [(str(tmp_path / "nodrive"), True)]
+    out = capsys.readouterr().out
+    assert "mount failed" in out and "Select all" in out and "USE_UPLOAD = True" in out
+
+    cell = next(c for c in _code_cells() if "def find_zip" in c.source).source
+    assert "USE_UPLOAD = False" in cell
+    assert "if repo is None and USE_UPLOAD:" in cell
+    assert cell.index("if repo is None and USE_UPLOAD:") < cell.index("files.upload()")

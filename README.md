@@ -72,7 +72,9 @@ New notebook → *Add Input* → Competition → `gemma-4-developer-agent`. The 
    several `patchgraph-qa-day1*.zip`, the most recently modified one is used). Open
    `notebooks/01_explore_graphs.ipynb` and run all cells: it mounts Drive, finds and extracts the
    zip (browser upload is only a last-resort fallback), and adds `src/` to `sys.path` so no
-   runtime restart is needed. It installs `kaggle>=2.2` and downloads **only** `tasks.jsonl`, `graphs/` and
+   runtime restart is needed. If the Drive mount fails, the cell prints what to do and stops
+   (browser upload only with `USE_UPLOAD = True`). Downloads pause between files and back off on
+   HTTP 429; re-run the download cell until it reports nothing missing. It installs `kaggle>=2.2` and downloads **only** `tasks.jsonl`, `graphs/` and
    `embeddings/`, one file at a time (the 22 GB snapshots and wheels are skipped).
    Fallbacks: legacy secrets `KAGGLE_USERNAME` + `KAGGLE_KEY`, or uploading `kaggle.json`.
 
