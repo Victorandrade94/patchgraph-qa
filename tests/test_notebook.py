@@ -75,3 +75,65 @@ def test_analysis_cells_run_on_synthetic_data(data_dir, monkeypatch):
     assert len(ns["rows"]) == 1 and ns["rows"][0]["file_coverage"] == 1.0
     assert ns["items"] and ns["items"][0].template == "callers"
     assert any("Embedding model" in item for item, _ in ns["checklist"])
+
+
+def _install_helpers(tmp_path: Path) -> dict:
+    """Exec only the imports and function defs of the install cell (no Drive, no pip)."""
+    cell = next(c for c in _code_cells() if "def find_zip" in c.source)
+    tree = ast.parse(_strip_magics(cell.source))
+    keep = [
+        n
+        for n in tree.body  # keep source order: defaults like ZIP_NAME precede the defs
+        if isinstance(n, (ast.Import, ast.ImportFrom, ast.FunctionDef))
+        or (isinstance(n, ast.Assign) and ast.unparse(n).startswith("ZIP_NAME"))
+    ]
+    ns: dict = {"Path": Path, "WORK": tmp_path / "work", "IN_KAGGLE": False}
+    exec(compile(ast.Module(body=keep, type_ignores=[]), "<install-cell>", "exec"), ns)
+    return ns
+
+
+def _make_zip(path: Path) -> None:
+    import zipfile
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("patchgraph-qa/pyproject.toml", "[project]\nname='x'\n")
+        zf.writestr("patchgraph-qa/src/patchgraph_qa/__init__.py", "__version__ = 'zip'\n")
+
+
+def test_install_cell_prefers_drive_and_activates_src(tmp_path, monkeypatch):
+    ns = _install_helpers(tmp_path)
+    drive = tmp_path / "MyDrive"
+    _make_zip(drive / "a" / "b" / ns["ZIP_NAME"])
+    _make_zip(drive / "x" / "y" / "z" / "w" / ns["ZIP_NAME"])  # too deep: ignored
+    (drive / ".hidden").mkdir()
+
+    zp = ns["find_zip"](drive)
+    assert zp == drive / "a" / "b" / ns["ZIP_NAME"]
+    assert ns["find_zip"](drive, max_depth=1) is None
+    assert ns["find_zip"](tmp_path / "missing") is None
+
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "patchgraph-qa").mkdir()
+    (work / "patchgraph-qa" / "stale.txt").write_text("old")
+    repo = ns["extract_repo"](zp, work)
+    assert repo == work / "patchgraph-qa" and not (repo / "stale.txt").exists()
+
+    # The cell must put src/ on sys.path *after* pip, so the import works without a restart.
+    cell = next(c for c in _code_cells() if "def find_zip" in c.source).source
+    assert cell.index("!pip install -q -e") < cell.index("activate_src(repo)\n    import")
+    assert cell.index("drive.mount") < cell.index("files.upload()")
+
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    saved = {m: sys.modules.pop(m) for m in list(sys.modules) if m.startswith("patchgraph_qa")}
+    try:
+        ns["activate_src"](repo)
+        assert sys.path[0] == str(repo / "src")
+        import patchgraph_qa
+
+        assert patchgraph_qa.__version__ == "zip"
+    finally:
+        for m in [m for m in sys.modules if m.startswith("patchgraph_qa")]:
+            del sys.modules[m]
+        sys.modules.update(saved)

@@ -223,17 +223,28 @@ if IN_COLAB and not IN_KAGGLE:
 md(r"""
 ## 4 · Install this package (`patchgraph_qa`)
 
-* **Colab:** upload `patchgraph-qa-day1.zip` when prompted (or put the unzipped folder at
-  `/content/patchgraph-qa`).
+* **Colab (recommended):** put `patchgraph-qa-day1.zip` anywhere in **Google Drive → My Drive**
+  (top level or a few folders deep). The cell mounts Drive, finds the zip, and extracts it to
+  `/content`. Only if no zip is found does it fall back to `files.upload()` (which can hang in
+  some browsers). An unzipped folder at `/content/patchgraph-qa` also works.
 * **Kaggle:** create a private Dataset from `patchgraph-qa-day1.zip`, then *Add Input* it; the
   cell finds it under `/kaggle/input/`.
+* After installing, the cell puts `<repo>/src` on `sys.path` so the import works **without
+  restarting the runtime** (an editable install is otherwise not visible until a restart).
 """)
 
 code(r"""
+import importlib
+import os
 import shutil
+import sys
+import zipfile
 
-def find_repo() -> Path | None:
-    roots = [WORK / "patchgraph-qa", Path.cwd(), Path.cwd().parent]
+ZIP_NAME = "patchgraph-qa-day1.zip"
+
+
+def find_repo(extra_roots=()) -> Path | None:
+    roots = [*extra_roots, WORK / "patchgraph-qa", Path.cwd(), Path.cwd().parent]
     if IN_KAGGLE:
         roots += sorted(Path("/kaggle/input").glob("**/patchgraph-qa"))
     for r in roots:
@@ -241,16 +252,74 @@ def find_repo() -> Path | None:
             return r
     return None
 
-repo = find_repo()
-if repo is None and IN_COLAB and not IN_KAGGLE:
-    from google.colab import files
-    print("Upload patchgraph-qa-day1.zip")
-    up = files.upload()
-    for fname in up:
-        if fname.endswith(".zip"):
-            with zipfile.ZipFile(fname) as zf:
-                zf.extractall(WORK)
+
+def find_zip(root: Path, name: str = ZIP_NAME, max_depth: int = 3) -> Path | None:
+    # Shallow breadth-first search: Drive is a slow network filesystem, so cap the depth
+    # and skip hidden/trash folders instead of globbing the whole Drive.
+    level = [Path(root)]
+    for _depth in range(max_depth + 1):
+        nxt = []
+        for d in level:
+            try:
+                entries = sorted(os.scandir(d), key=lambda e: e.name)
+            except OSError:
+                continue
+            for e in entries:
+                if e.name == name and e.is_file():
+                    return Path(e.path)
+            nxt += [Path(e.path) for e in entries
+                    if e.is_dir(follow_symlinks=False) and not e.name.startswith(".")]
+        level = nxt
+    return None
+
+
+def extract_repo(zip_path: Path, dest: Path) -> Path | None:
+    # The zip has a top-level patchgraph-qa/ folder; replace any older copy so a new zip wins.
+    target = dest / "patchgraph-qa"
+    if target.exists():
+        shutil.rmtree(target)
+    with zipfile.ZipFile(zip_path) as zf:
+        zf.extractall(dest)
+    return find_repo([target])
+
+
+def activate_src(repo: Path) -> None:
+    # Make `import patchgraph_qa` work in this kernel right now (no runtime restart).
+    src = str(Path(repo) / "src")
+    if src not in sys.path:
+        sys.path.insert(0, src)
+    for mod in [m for m in sys.modules if m == "patchgraph_qa" or m.startswith("patchgraph_qa.")]:
+        del sys.modules[mod]  # drop any stale copy imported from an older location
+    importlib.invalidate_caches()
+
+
+repo = None
+if IN_COLAB and not IN_KAGGLE:
+    # 1) Google Drive first.
+    try:
+        from google.colab import drive
+        drive.mount("/content/drive")
+        zp = find_zip(Path("/content/drive/MyDrive"))
+        if zp is not None:
+            print("found", zp)
+            repo = extract_repo(zp, WORK)
+        else:
+            print(f"{ZIP_NAME} not found in My Drive (searched 3 folders deep)")
+    except Exception as exc:  # mount refused/failed: fall through to the other options
+        print("Drive not used:", type(exc).__name__, exc)
+    # 2) An already-unzipped copy.
+    if repo is None:
+        repo = find_repo()
+    # 3) Last resort: browser upload (may hang in some browsers).
+    if repo is None:
+        from google.colab import files
+        print(f"Upload {ZIP_NAME}")
+        for fname in files.upload():
+            if fname.endswith(".zip"):
+                repo = extract_repo(Path(fname), WORK)
+else:
     repo = find_repo()
+
 if repo is not None and IN_KAGGLE and not str(repo).startswith("/kaggle/working"):
     # /kaggle/input is read-only; copy so pip can build in place.
     dst = WORK / "patchgraph-qa"
@@ -260,6 +329,11 @@ if repo is not None and IN_KAGGLE and not str(repo).startswith("/kaggle/working"
 print("repo:", repo)
 if repo is not None:
     !pip install -q -e "{repo}"
+    activate_src(repo)
+    import patchgraph_qa
+    print("patchgraph_qa", patchgraph_qa.__version__, "from", patchgraph_qa.__file__)
+else:
+    print("patchgraph-qa not found: see the instructions above this cell.")
 """, "setup")
 
 md(r"""
