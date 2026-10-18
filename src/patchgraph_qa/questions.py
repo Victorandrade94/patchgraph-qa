@@ -1,7 +1,8 @@
 """QA item schema and question templates answered exactly by NetworkX.
 
-Day-1 templates: ``callers`` and ``callees`` (1 hop). Answers are computed from the graph
-only. Note the graph itself may be wrong (static analysis misses edges), so an answer is
+Templates: ``callers`` and ``callees`` (1 hop), ``callers_2hop`` (callers of callers) and
+``path_exists`` (is there a directed call path from A to B?). Answers are computed from the
+graph only. Note the graph itself may be wrong (static analysis misses edges), so an answer is
 "correct with respect to the provided graph", which the paper must state explicitly.
 """
 
@@ -9,13 +10,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import random
 from collections.abc import Iterable, Iterator
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
 import networkx as nx
 
-TEMPLATES = ("callers", "callees")
+#: Single-anchor templates handled by ``make_item`` / ``generate_items``.
+TEMPLATES = ("callers", "callees", "callers_2hop")
+#: Two-anchor yes/no template handled by ``make_path_item`` / ``generate_path_items``.
+PATH_TEMPLATE = "path_exists"
 ENCODINGS = ("adjacency_list", "none")
 # "calls" is the example edge type on the data page; whether other types exist is unverified.
 DEFAULT_EDGE_TYPES: tuple[str, ...] = ("calls",)
@@ -86,6 +91,56 @@ def callees(
     return sorted(out)
 
 
+def callers_2hop(
+    graph: nx.Graph, symbol: str, edge_types: Iterable[str] | None = DEFAULT_EDGE_TYPES
+) -> list[str]:
+    """Distinct X such that X calls some Y and Y calls ``symbol``, with X, Y and ``symbol``
+    pairwise different. X may also be a direct caller; the question text says so."""
+    out: set[str] = set()
+    for mid in callers(graph, symbol, edge_types):
+        out.update(x for x in callers(graph, mid, edge_types) if x != symbol)
+    return sorted(out)
+
+
+def two_hop_edges(
+    graph: nx.Graph, symbol: str, edge_types: Iterable[str] | None = DEFAULT_EDGE_TYPES
+) -> set[tuple[str, str]]:
+    """Every edge on some X -> Y -> ``symbol`` path counted by ``callers_2hop``."""
+    needed: set[tuple[str, str]] = set()
+    for mid in callers(graph, symbol, edge_types):
+        outer = [x for x in callers(graph, mid, edge_types) if x != symbol]
+        if outer:
+            needed.add((mid, symbol))
+            needed.update((x, mid) for x in outer)
+    return needed
+
+
+def typed_digraph(
+    graph: nx.Graph, edge_types: Iterable[str] | None = DEFAULT_EDGE_TYPES
+) -> nx.DiGraph:
+    """Simple directed graph with only edges of the given types (self-loops dropped)."""
+    if not graph.is_directed():
+        raise ValueError("call-graph questions need a directed graph")
+    typed = nx.DiGraph()
+    typed.add_nodes_from(str(n) for n in graph.nodes)
+    typed.add_edges_from((u, v) for u, v, _ in _typed_edges(graph, edge_types) if u != v)
+    return typed
+
+
+def path_exists(
+    graph: nx.Graph,
+    source: str,
+    target: str,
+    edge_types: Iterable[str] | None = DEFAULT_EDGE_TYPES,
+) -> tuple[bool, int | None]:
+    """Whether a directed call path ``source -> ... -> target`` exists, and its shortest length."""
+    typed = typed_digraph(graph, edge_types)
+    try:
+        return True, nx.shortest_path_length(typed, source, target)
+    except (nx.NetworkXNoPath, nx.NodeNotFound):
+        return False, None
+
+
 def adjacency_context(
     graph: nx.Graph,
     anchor: str,
@@ -114,6 +169,11 @@ def adjacency_context(
 _QUESTION = {
     "callers": "Which functions or methods call `{s}`? List every distinct caller.",
     "callees": "Which functions or methods does `{s}` call? List every distinct callee.",
+    "callers_2hop": (
+        "Which functions or methods call a caller of `{s}`? List every distinct X such that "
+        "X calls some Y and Y calls `{s}` (X, Y and `{s}` all different). X may also call "
+        "`{s}` directly."
+    ),
 }
 
 
@@ -135,7 +195,8 @@ def make_item(
     if anchor not in graph:
         return None
     et = tuple(edge_types) if edge_types is not None else None
-    answer = callers(graph, anchor, et) if template == "callers" else callees(graph, anchor, et)
+    answer_fn = {"callers": callers, "callees": callees, "callers_2hop": callers_2hop}[template]
+    answer = answer_fn(graph, anchor, et)
     meta: dict[str, Any] = {"edge_types": list(et) if et else None, "answer_format": "set"}
 
     question = _QUESTION[template].format(s=anchor)
@@ -145,8 +206,10 @@ def make_item(
         )
         if template == "callers":
             needed = {(a, anchor) for a in answer}
-        else:
+        elif template == "callees":
             needed = {(anchor, a) for a in answer}
+        else:
+            needed = two_hop_edges(graph, anchor, et)
         complete = needed.issubset(set(edges))
         if not complete:
             return None  # never ask a question whose answer the context cannot support
@@ -169,7 +232,7 @@ def make_item(
         encoding=encoding,
         question=question,
         answer=answer,
-        difficulty_hops=1,
+        difficulty_hops=2 if template == "callers_2hop" else 1,
         anchor_symbols=[anchor],
         meta=meta,
     )
@@ -193,6 +256,111 @@ def generate_items(
                 item = make_item(graph, task_id, t, anchor, enc, edge_types)
                 if item is None or (not item.answer and not include_empty):
                     continue
+                items.append(item)
+    return items
+
+
+def make_path_item(
+    graph: nx.Graph,
+    task_id: str,
+    source: str,
+    target: str,
+    encoding: str = "adjacency_list",
+    edge_types: Iterable[str] | None = DEFAULT_EDGE_TYPES,
+    max_context_edges: int = 200,
+) -> QAItem | None:
+    """Yes/no item: is there a directed call path from ``source`` to ``target``?
+
+    The adjacency context is every typed edge among descendants of ``source`` and ancestors of
+    ``target``. That set is closed under "what does this call", so a "no" answer is verifiable
+    from the context alone. If it would need truncating, the item is refused (``None``)."""
+    if encoding not in ENCODINGS:
+        raise ValueError(f"unknown encoding {encoding!r}; known: {ENCODINGS}")
+    if source not in graph or target not in graph or source == target:
+        return None
+    et = tuple(edge_types) if edge_types is not None else None
+    typed = typed_digraph(graph, et)
+    exists, length = path_exists(graph, source, target, et)
+    meta: dict[str, Any] = {
+        "edge_types": list(et) if et else None,
+        "answer_format": "boolean",
+        "shortest_path_length": length,
+    }
+    question = (
+        f"Is there a chain of calls that starts at `{source}` and reaches `{target}` "
+        "(directly or through other functions)?"
+    )
+    if encoding == "adjacency_list":
+        keep = {source, target} | nx.descendants(typed, source) | nx.ancestors(typed, target)
+        edges = sorted(typed.subgraph(keep).edges())
+        if len(edges) > max_context_edges:
+            return None  # a truncated context could hide the path or fake its absence
+        meta.update({"context_edges": len(edges), "context_truncated": False})
+        text = "\n".join(f"{u} -> {v}" for u, v in edges)
+        question = (
+            "Below is part of a code call graph. Each line `A -> B` means A calls B.\n\n"
+            f"{text}\n\n{question}\nAnswer with exactly one word: yes or no."
+        )
+    else:
+        meta["context_edges"] = 0
+        question += " Answer with exactly one word: yes or no."
+    return QAItem(
+        id=make_id(task_id, PATH_TEMPLATE, encoding, [source, target]),
+        task_id=task_id,
+        template=PATH_TEMPLATE,
+        encoding=encoding,
+        question=question,
+        answer=["yes" if exists else "no"],
+        difficulty_hops=length or 0,
+        anchor_symbols=[source, target],
+        meta=meta,
+    )
+
+
+def sample_path_pairs(
+    graph: nx.Graph,
+    n_pairs: int,
+    seed: int = 0,
+    edge_types: Iterable[str] | None = DEFAULT_EDGE_TYPES,
+    min_hops: int = 2,
+) -> list[tuple[str, str]]:
+    """Up to ``n_pairs`` (source, target) pairs, half reachable (shortest path >= ``min_hops``,
+    so the answer is not a single visible edge) and half unreachable. Unreachable targets are
+    drawn from nodes that have callers, so "no" is not trivially "the target is never called".
+    Deterministic for a given seed."""
+    typed = typed_digraph(graph, edge_types)
+    rng = random.Random(seed)
+    sources = sorted(n for n in typed if typed.out_degree(n) > 0)
+    called = sorted(n for n in typed if typed.in_degree(n) > 0)
+    rng.shuffle(sources)
+    pos: list[tuple[str, str]] = []
+    neg: list[tuple[str, str]] = []
+    half = n_pairs // 2
+    for s in sources:
+        dist = nx.single_source_shortest_path_length(typed, s)
+        far = sorted(t for t, d in dist.items() if d >= min_hops)
+        if far and len(pos) < n_pairs - half:
+            pos.append((s, rng.choice(far)))
+        unreachable = [t for t in called if t not in dist and t != s]
+        if unreachable and len(neg) < half:
+            neg.append((s, rng.choice(unreachable)))
+        if len(pos) >= n_pairs - half and len(neg) >= half:
+            break
+    return pos + neg
+
+
+def generate_path_items(
+    graph: nx.Graph,
+    task_id: str,
+    pairs: Iterable[tuple[str, str]],
+    encodings: Iterable[str] = ("adjacency_list",),
+    edge_types: Iterable[str] | None = DEFAULT_EDGE_TYPES,
+) -> list[QAItem]:
+    items: list[QAItem] = []
+    for s, t in dict.fromkeys(pairs):
+        for enc in encodings:
+            item = make_path_item(graph, task_id, s, t, enc, edge_types)
+            if item is not None:
                 items.append(item)
     return items
 

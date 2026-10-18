@@ -607,7 +607,7 @@ else:
     print("no embeddings file for", first.instance_id)
 """, "analysis")
 
-md("## 10 · First QA items (callers / callees) anchored on gold-patch symbols")
+md("## 10 · First QA items (callers / callees / 2-hop callers, path exists)")
 
 code(r"""
 cov0 = patch_parse.coverage_for_patch(g0, first.patch)
@@ -619,6 +619,16 @@ for it in items[:2]:
     print("-" * 80)
     print(it.template, "| hops:", it.difficulty_hops, "| meta:", it.meta)
     print(it.question[:800])
+    print("ANSWER:", it.answer)
+print("by template:", {t: sum(i.template == t for i in items) for t in questions.TEMPLATES})
+
+# Yes/no reachability items: half reachable (>= 2 calls away), half not.
+pairs = questions.sample_path_pairs(g0, 10, seed=0)
+path_items = questions.generate_path_items(g0, first.instance_id, pairs)
+print(f"{len(path_items)} path_exists items (refused if context > 200 edges)")
+for it in path_items[:1] + [i for i in path_items if i.answer == ["no"]][:1]:
+    print("-" * 80)
+    print(it.anchor_symbols, "| hops:", it.difficulty_hops, "| meta:", it.meta)
     print("ANSWER:", it.answer)
 """, "analysis")
 
