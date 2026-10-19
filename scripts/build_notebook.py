@@ -495,6 +495,28 @@ print("other attributes:", {k: v for k, v in attrs.items() if k != "text"})
 print("text (first 600 chars):\n" + str(attrs.get("text", ""))[:600])
 """, "analysis")
 
+md(r"""
+### 6b · Sanity check for the test/async heuristics (day 3)
+
+Day 1 found **0 async nodes** in fastapi (which has plenty of `async def`) and ~78% "test"
+nodes. The async check now parses each node's text with `ast` (handles multi-line
+decorators), and `TestClient`-style library classes no longer count as tests. This cell shows
+the raw evidence: if `nodes_with_async_def_anywhere` > 0 but `async_nodes` is still 0, look
+at `first_lines` to see what the node text actually starts with.
+""")
+
+code(r"""
+diag = stats.async_text_diagnostics(g0, n_examples=5)
+print({k: v for k, v in diag.items() if k != "examples"})
+for ex in diag["examples"]:
+    print("-", ex["id"]); [print("     |", ln[:110]) for ln in ex["first_lines"]]
+
+test_ids = sorted(str(n) for n in g0.nodes if stats.is_test_node(str(n)))
+print(f"\ntest nodes: {len(test_ids)} / {g0.number_of_nodes()}")
+print("top-level packages of test nodes:", Counter(i.split(".")[0] for i in test_ids).most_common(5))
+print("top-level packages of ALL nodes: ", Counter(str(n).split(".")[0] for n in g0.nodes).most_common(5))
+""", "analysis")
+
 md("## 7 · Plots for this graph (code is visible on purpose: tweak it)")
 
 code(r"""
@@ -647,7 +669,7 @@ checklist = [
     ("Embedding shape/dtype match the docs (256, float32)",
      f"measured on 1 file: {es.shapes} {es.dtypes}" if es else "not measured"),
     ("Test functions present as graph nodes", f"{'YES' if any_tests else 'NO'} (heuristic)"),
-    ("Async functions present", f"{'YES' if any_async else 'NO'} (header-line heuristic)"),
+    ("Async functions present", f"{'YES' if any_async else 'NO'} (ast-based heuristic)"),
     ("Possible async gaps (await but no outgoing calls edge)",
      f"{gaps} nodes total - candidates only, not proof"),
     ("Edge types other than 'calls'", str(sorted(all_types))),

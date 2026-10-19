@@ -47,3 +47,36 @@ def test_async_heuristic_ignores_nested_and_handles_decorators():
     assert stats.is_async_node({"text": "@deco\nasync def f():\n    await g()"})
     assert stats.has_await({"text": "@deco\nasync def f():\n    await g()"})
     assert not stats.has_await({"text": "def f():\n    return 'await x'"})
+
+
+def test_async_heuristic_handles_multiline_decorators_and_comments():
+    text = (
+        '@router.get(\n    "/items",\n    response_model=Item,\n)\nasync def read():\n    return 1'
+    )
+    assert stats.is_async_node({"text": text})
+    assert stats.is_async_node({"text": "# helper\nasync def f():\n    await g()"})
+    assert stats.is_async_node(
+        {"text": "    async def m(self):\n        await g()"}
+    )  # indented method
+    assert not stats.is_async_node(
+        {"text": "def f():\n    async def inner(): ...\n    return inner"}
+    )
+    # Unparseable text falls back to the header-line check.
+    assert stats.is_async_node({"text": "async def broken(:\n"})
+
+
+def test_test_node_heuristic_ignores_library_test_client():
+    assert not stats.is_test_node("fastapi.testclient.TestClient")
+    assert not stats.is_test_node("starlette.testclient.TestClient.request")
+    assert stats.is_test_node("tests.test_tutorial.test_read_items")
+    assert stats.is_test_node("pkg.core_test.TestEngine.test_run")
+    assert stats.is_test_node("tests.conftest.client")
+    assert not stats.is_test_node("fastapi.routing.APIRoute")
+
+
+def test_async_text_diagnostics(graph_json):
+    g = graph_from_node_link(graph_json)
+    d = stats.async_text_diagnostics(g)
+    assert d["async_nodes"] == 2
+    assert d["nodes_with_async_def_anywhere"] >= 2
+    assert d["own_kind_of_those"].get("async_def") == 2

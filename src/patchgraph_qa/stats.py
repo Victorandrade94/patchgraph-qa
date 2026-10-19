@@ -21,13 +21,17 @@ _AWAIT_RE = re.compile(r"\bawait\s+[A-Za-z_]")
 
 
 def is_test_node(node_id: str) -> bool:
-    """Heuristic: any dotted segment is ``tests``/``test`` or starts with ``test_``/``Test``.
+    """Heuristic, pytest naming conventions on the dotted id.
 
-    Unverified whether the competition graphs include test code at all; that is what this
-    heuristic is for."""
+    A node counts as test code when some segment is a test package (``tests``/``test``) or
+    a test module/function (``test_*``, ``*_test``, ``conftest``). A bare ``Test*`` prefix is
+    NOT enough on its own: library classes such as ``fastapi.testclient.TestClient`` would be
+    counted as tests (a day-1 false positive). ``Test*`` classes inside test modules are still
+    caught by their module segment."""
     parts = str(node_id).split(".")
     return any(
-        p in ("tests", "test") or p.startswith("test_") or p.startswith("Test") for p in parts
+        p in ("tests", "test", "conftest") or p.startswith("test_") or p.endswith("_test")
+        for p in parts
     )
 
 
@@ -40,12 +44,65 @@ def _header_line(text: str) -> str:
     return ""
 
 
+def _own_def_kind(text: str) -> str | None:
+    """Kind of the node's OWN top-level statement, parsed with ``ast``.
+
+    Returns ``"async_def"``, ``"def"``, ``"class"``, ``"other"`` or ``None`` when the text does
+    not parse. Parsing handles multi-line decorators and leading comments, which a
+    line-based check gets wrong."""
+    import ast
+    import textwrap
+
+    try:
+        tree = ast.parse(textwrap.dedent(text))
+    except (SyntaxError, ValueError):
+        return None
+    for stmt in tree.body:
+        if isinstance(stmt, ast.Expr) and isinstance(getattr(stmt, "value", None), ast.Constant):
+            continue  # stray string/docstring before the definition
+        if isinstance(stmt, ast.AsyncFunctionDef):
+            return "async_def"
+        if isinstance(stmt, ast.FunctionDef):
+            return "def"
+        if isinstance(stmt, ast.ClassDef):
+            return "class"
+        return "other"
+    return "other"
+
+
 def is_async_node(attrs: dict[str, Any]) -> bool:
-    """Heuristic: the node's OWN header line is ``async def ...``.
+    """Heuristic: the node's OWN definition is ``async def`` (decorators allowed).
 
     Module and class nodes contain nested source, so searching the whole text would count a
-    module as "async" just because it contains an async function (a bug caught by tests)."""
-    return bool(_ASYNC_DEF_RE.match(_header_line(str(attrs.get("text", "")))))
+    module as "async" just because it contains an async function (a bug caught by tests).
+    Uses ``ast`` first; falls back to the first non-decorator line if the text won't parse."""
+    text = str(attrs.get("text", ""))
+    kind = _own_def_kind(text)
+    if kind is not None:
+        return kind == "async_def"
+    return bool(_ASYNC_DEF_RE.match(_header_line(text)))
+
+
+def async_text_diagnostics(graph: nx.Graph, n_examples: int = 3) -> dict[str, Any]:
+    """Raw evidence for checking the async heuristic against real graphs.
+
+    ``nodes_with_async_def_anywhere`` counts nodes whose text contains ``async def`` at all
+    (modules and classes included); if that is > 0 while ``async_nodes`` is 0, the heuristic
+    is wrong, and ``examples`` shows the first lines of such texts to see why."""
+    anywhere = [
+        (str(n), str(a.get("text", "")))
+        for n, a in graph.nodes(data=True)
+        if "async def" in str(a.get("text", ""))
+    ]
+    kinds = Counter(str(_own_def_kind(t)) for _, t in anywhere)
+    return {
+        "nodes_with_async_def_anywhere": len(anywhere),
+        "own_kind_of_those": dict(kinds),
+        "async_nodes": sum(1 for _, a in graph.nodes(data=True) if is_async_node(a)),
+        "examples": [
+            {"id": n, "first_lines": t.splitlines()[:3]} for n, t in sorted(anywhere)[:n_examples]
+        ],
+    }
 
 
 def has_await(attrs: dict[str, Any]) -> bool:
