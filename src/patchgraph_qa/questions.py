@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import random
 from collections.abc import Iterable, Iterator
 from dataclasses import asdict, dataclass, field
@@ -375,3 +376,19 @@ def score_set(prediction: Iterable[str], answer: Iterable[str]) -> dict[str, flo
     rec = tp / len(a) if a else 0.0
     f1 = 2 * prec * rec / (prec + rec) if prec + rec else 0.0
     return {"exact": float(p == a), "precision": prec, "recall": rec, "f1": f1}
+
+
+def write_jsonl(path: str | os.PathLike[str], items: Iterable[QAItem]) -> int:
+    """Write QA items as one JSON object per line. Returns the number of lines written."""
+    from pathlib import Path as _Path
+
+    out = _Path(path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    n = 0
+    with open(out, "w", encoding="utf-8") as fh:
+        for item in items:
+            fh.write(item.to_json())
+            fh.write("\n")
+            n += 1
+    return n
+

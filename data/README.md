@@ -8,6 +8,10 @@ Expected layout after download (paths may differ; `patchgraph_qa.io.find_data_ro
 ```
 data/
   tasks.jsonl            # may also appear as published/tasks.jsonl
-  graphs/<instance_id>.json
-  embeddings/<instance_id>.npz
+  graphs/<repo_short>_<base_commit>.json
+  embeddings/<repo_short>_<base_commit>.npz
 ```
+
+Verified (Oct 17, 2026): files are named by **repo + commit**, not by task `instance_id`.
+`download -f graphs/<instance_id>.json` returns 404. Build names with
+`patchgraph_qa.io.download_names(tasks)` (or the notebook download cell).

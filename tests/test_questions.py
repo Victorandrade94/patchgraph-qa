@@ -117,3 +117,13 @@ def test_score_set():
     s = q.score_set(["a", "b"], ["b", "c"])
     assert s["exact"] == 0.0 and s["precision"] == 0.5 and s["recall"] == 0.5 and s["f1"] == 0.5
     assert q.score_set(["a"], [])["f1"] == 0.0
+
+
+def test_write_jsonl(tmp_path, g):
+    items = q.generate_items(g, "pkg_1", ["pkg.core.helper"])
+    path = tmp_path / "qa.jsonl"
+    assert q.write_jsonl(path, items) == len(items)
+    lines = path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == len(items)
+    assert json.loads(lines[0])["task_id"] == "pkg_1"
+

@@ -15,8 +15,9 @@ Target: the **Best New Resource** award of the
 [paper track](https://www.kaggle.com/competitions/gemma-4-developer-agent-paper)
 (writeup due **Nov 12, 2026, 23:59 UTC = 17:59 CST**).
 
-> Status: day-1 scaffold. Nothing here has been run on the real data yet. Facts about the
-> data that are still unverified are listed below and measured by the exploration notebook.
+> Status: day-3 code (templates `callers` / `callees` / `callers_2hop` / `path_exists`, async
+> heuristics). **Still not run on real competition data in this checkout.** Unverified facts
+> below are measured by notebook 01. Paper-track recovery docs live in `docs/`.
 
 ## What is in this repo
 
@@ -63,12 +64,12 @@ You must have joined the competition and accepted its rules. **Never commit or s
 New notebook → *Add Input* → Competition → `gemma-4-developer-agent`. The notebook auto-detects
 `/kaggle/input/gemma-4-developer-agent/` and `/kaggle/input/competitions/gemma-4-developer-agent/`
 (which one Kaggle uses is unverified). To install this package there, upload
-`patchgraph-qa-day1.zip` as a private Kaggle Dataset and add it as an input too.
+`patchgraph-qa-day3.zip` (or any `patchgraph-qa-day*.zip`) as a private Kaggle Dataset and add it as an input too.
 
 **Option B: Google Colab.**
 1. kaggle.com → Settings → **API Tokens** → create a token.
 2. In Colab, key icon → add secret **`KAGGLE_API_TOKEN`** with the token, and enable notebook access.
-3. Put `patchgraph-qa-day1.zip` in Google Drive → My Drive (up to 3 folders deep; if there are
+3. Put `patchgraph-qa-day3.zip` (or any `patchgraph-qa-day*.zip`) in Google Drive → My Drive (up to 3 folders deep; if there are
    several `patchgraph-qa-day1*.zip`, the most recently modified one is used). Open
    `notebooks/01_explore_graphs.ipynb` and run all cells: it mounts Drive, finds and extracts the
    zip (browser upload is only a last-resort fallback), and adds `src/` to `sys.path` so no
