@@ -6,6 +6,8 @@ Scope: Best New Resource writeup ≤3000 words. Gemma E2B optional.
 
 Legend: `[ ]` todo · `[x]` done · `(V)` needs Víctor · `(K)` needs Ken/agent locally
 
+**Remaining TODOs (after 2026-11-09 real-data run):** baseline numbers (oracle/embedding), embedding model identity, publishability (forum ask), JSONL export counts, writeup v1.
+
 ---
 
 ## Tonight (Wed 5 Nov) — prep without competition data
@@ -21,12 +23,12 @@ Legend: `[ ]` todo · `[x]` done · `(V)` needs Víctor · `(K)` needs Ken/agent
 
 ## Fri 6 Nov — real data + forum ask
 
-- [ ] (V) Open Colab (or Kaggle notebook) with secret `KAGGLE_API_TOKEN`
-- [ ] (V) Put newest `patchgraph-qa-day*.zip` in Drive → My Drive (≤3 folders deep) **or** Add Input on Kaggle
-- [ ] (V) Open `notebooks/01_explore_graphs.ipynb` → **Run All**
-- [ ] (V) Re-run download cell until it prints nothing missing (429 backoff is normal)
-- [ ] (V) Save / copy outputs from sections **8, 9, 10, 11** (stats table, embedding check, QA sample, checklist)
-- [ ] (V) Paste section-11 checklist into a note or `docs/real_data_checklist_nov6.md`
+- [x] (V) Open Colab with secret `KAGGLE_API_TOKEN` (2026-11-09)
+- [x] (V) Put `patchgraph-qa-day4.zip` in Drive; download completed (nested CLI path quirk noted)
+- [x] (V) Run All on notebook 01 — sections 8–11 pasted (129/129 graphs; mean cov 0.827)
+- [x] (K) Fix anchor `docs_src` mismatch + nested download flatten + baselines cell → day5 zip
+- [ ] (V) Re-run notebook from §4 (or Run All) with **day5** zip; paste §10–12 (QA + baselines + checklist)
+- [ ] (V) Paste section-12 checklist into a note or `docs/real_data_checklist_nov9.md`
 - [ ] (V) Post `docs/forum_publishability_ask.md` on the **paper-track** forum (after a quick personal read)
 - [ ] (K) Fill README “Unverified facts” from those outputs once Víctor shares them
 
@@ -36,7 +38,7 @@ Legend: `[ ]` todo · `[x]` done · `(V)` needs Víctor · `(K)` needs Ken/agent
 
 ## Sat 7 Nov — coverage table + JSONL v0
 
-- [ ] (K/V) Finish patch→symbol coverage table (per-repo + overall mean)
+- [x] (K/V) Patch→symbol coverage table (mean 0.827; per-repo approx. filled in writeup §4)
 - [ ] (K) Run `python scripts/export_qa_v0.py --out artifacts/patchgraph_qa_v0.jsonl` (needs local/Colab data)
 - [ ] (K) Confirm all 4 templates present: `callers`, `callees`, `callers_2hop`, `path_exists`
 - [ ] (K) Record item counts + refuse rates in writeup §4
@@ -58,8 +60,8 @@ Legend: `[ ]` todo · `[x]` done · `(V)` needs Víctor · `(K)` needs Ken/agent
 
 ## Mon 9 Nov — baselines freeze
 
-- [ ] (K) Score **graph oracle** on frozen JSONL (expect ~perfect)
-- [ ] (K) Score **embedding heuristic** (cosine top-k / threshold); log seed + k
+- [x] (K) Baselines cell added to notebook §11 (oracle + embedding); needs Vic Colab paste for real numbers
+- [ ] (K/V) Score **graph oracle** + **embedding heuristic** on real items; log seed + k
 - [ ] (K) Freeze numbers into writeup §5 table — no more metric churn after today
 - [ ] ( ) Optional: Gemma E2B smoke on ~50 items (skip if behind)
 

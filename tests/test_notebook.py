@@ -77,6 +77,8 @@ def test_analysis_cells_run_on_synthetic_data(data_dir, monkeypatch):
     assert ns["DATA_ROOT"] == data_dir
     assert len(ns["rows"]) == 1 and ns["rows"][0]["file_coverage"] == 1.0
     assert ns["items"] and ns["items"][0].template == "callers"
+    assert ns["anchor_source"] == "patch"
+    assert ns["oracle_scores"]["exact"] == 1.0
     assert any("Embedding model" in item for item, _ in ns["checklist"])
 
 
@@ -183,6 +185,41 @@ def test_download_cell_builds_commit_names_and_unzips(data_dir, tmp_path):
     # Already on disk: skipped without calling the CLI.
     ns["kaggle_cli"] = lambda *a: pytest.fail("should not download again")
     assert ns["download_one"](names[0], tmp_path / "dl" / "graphs") == out
+
+
+def test_download_flattens_nested_cli_layout(tmp_path):
+    """New kaggle CLI saves -f graphs/X.json -p data/graphs into data/graphs/graphs/X.json."""
+    ns = _install_helpers(tmp_path, marker="def names_from_tasks")
+    dest = tmp_path / "dl" / "graphs"
+    dest.mkdir(parents=True)
+    # Pre-existing nest from a previous partial run.
+    nested = dest / "graphs"
+    nested.mkdir()
+    (nested / "pre.json").write_text('{"pre":1}')
+    ns["flatten_download_dir"](dest)
+    assert (dest / "pre.json").read_text() == '{"pre":1}'
+    assert not nested.exists()
+
+    def fake_cli(*args):
+        name, out = args[args.index("-f") + 1], Path(args[args.index("-p") + 1])
+        base = name.split("/")[-1]
+        # Mimic new CLI: create out/<first-segment>/<base>
+        nest = out / name.split("/")[0]
+        nest.mkdir(parents=True, exist_ok=True)
+        (nest / base).write_text("{}")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    ns.update(kaggle_cli=fake_cli, SLUG="slug", SLEEP=lambda s: None)
+    out = ns["download_one"]("graphs/pkg_abc.json", dest)
+    assert out == dest / "pkg_abc.json" and out.read_text() == "{}"
+    assert not (dest / "graphs").exists()
+    # Resume: download_all flattens before checking.
+    (dest / "embeddings").mkdir()  # unrelated
+    nest2 = dest / "graphs"
+    nest2.mkdir()
+    (nest2 / "other.json").write_text("x")
+    ns["flatten_download_dir"](dest)
+    assert (dest / "other.json").read_text() == "x"
 
 
 def test_notebook_does_not_rely_on_listing_flags():

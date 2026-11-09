@@ -23,3 +23,10 @@
 - HTTP 429 during download → re-run download cell (built-in backoff/pause).
 - Several tasks share one commit graph (129 tasks / ~127 graphs).
 - `es` is set `None` if embeddings missing; checklist section 11 handles that.
+
+## 2026-11-09 real-data findings + day-5 fixes
+
+- Nested Kaggle CLI download: `-f graphs/X -p data/graphs` → `data/graphs/graphs/X`; flatten in download cell.
+- Anchor bug: `docs_src.pkg...` module path vs node ids `pkg...`; `module_matches_node` suffix match + `select_anchors` structural fallback.
+- Section 10 now switches demo task if first has 0 patch symbols; §11 baselines; checklist renumbered to §12.
+- Verified: 129/129 graphs, nodes 711/3250/4597, calls-only, mean cov 0.827, emb (256,) float32.

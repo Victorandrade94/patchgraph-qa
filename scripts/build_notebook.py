@@ -38,7 +38,7 @@ measures them instead of assuming them.
 |---|---|---|
 | Data | Click *Add Input → Competition → gemma-4-developer-agent*. Files are mounted read-only; nothing to download. | Downloaded with the Kaggle CLI using your API token. Only `tasks.jsonl`, `graphs/`, `embeddings/` (not the 22 GB snapshots). |
 | Credentials | Not needed for the data | Colab Secret **`KAGGLE_API_TOKEN`** (new-style token from kaggle.com → Settings → API Tokens). Legacy `kaggle.json` is a fallback. |
-| Package | Upload `patchgraph-qa-day3.zip` (or any `patchgraph-qa-day*.zip`) as a private Kaggle Dataset, add it as input | Put `patchgraph-qa-day3.zip` in Google Drive → My Drive (newest copy is used) |
+| Package | Upload `patchgraph-qa-day5.zip` (or any `patchgraph-qa-day*.zip`) as a private Kaggle Dataset, add it as input | Put `patchgraph-qa-day5.zip` in Google Drive → My Drive (newest copy is used) |
 
 The notebook auto-detects where it is running (Kaggle = `KAGGLE_KERNEL_RUN_TYPE` is set;
 Colab = `google.colab` loaded or `COLAB_RELEASE_TAG` set; a `/kaggle/input` folder alone means
@@ -170,7 +170,9 @@ by task id: `graphs/<repo>_<base_commit>.json`, `embeddings/<repo>_<base_commit>
 `download -f graphs/<instance_id>.json` returns 404. So we build the names from `tasks.jsonl`
 directly (129 tasks → 127 unique commits) and fetch them **one file at a time**
 (≈254 calls, roughly 10–20 minutes; files already on disk are skipped, so re-running after a
-disconnect resumes). Single files are sometimes served zipped; those are unpacked.
+disconnect resumes). Single files are sometimes served zipped; those are unpacked. Newer kaggle CLI
+versions may nest downloads as `data/graphs/graphs/<file>` — the cell flattens that
+automatically (and again at the start of each re-run).
 
 Kaggle **rate-limits** this (seen: `429 Too Many Requests` on embeddings). The loop pauses ~1 s
 after each file and, on a 429, retries up to 6 times waiting 5, 10, 20, 40, 60 s. At the end it
@@ -229,19 +231,54 @@ def is_rate_limited(res: subprocess.CompletedProcess) -> bool:
     return "429" in out or "Too Many Requests" in out
 
 
+def flatten_nested_artifact(dest_dir: Path, base: str) -> Path | None:
+    # New kaggle CLI may save -f graphs/X.json -p dest as dest/graphs/X.json.
+    # Move dest/<subdir>/<base> up to dest/<base> when that nesting appears.
+    target = dest_dir / base
+    if target.exists():
+        return target
+    for sub in sorted(p for p in dest_dir.iterdir() if p.is_dir()):
+        nested = sub / base
+        if nested.is_file():
+            shutil.move(str(nested), target)
+            try:
+                sub.rmdir()  # remove empty nest only
+            except OSError:
+                pass
+            return target
+    return None
+
+
+def flatten_download_dir(dest_dir: Path) -> None:
+    # Lift any already-nested dest/<folder>/* files up one level (resume-safe).
+    if not dest_dir.is_dir():
+        return
+    for sub in list(p for p in dest_dir.iterdir() if p.is_dir()):
+        for f in list(sub.iterdir()):
+            if f.is_file():
+                target = dest_dir / f.name
+                if not target.exists():
+                    shutil.move(str(f), target)
+        try:
+            sub.rmdir()
+        except OSError:
+            pass
+
+
 def download_one(name: str, dest_dir: Path) -> Path | None:
     dest_dir.mkdir(parents=True, exist_ok=True)
     base = name.split("/")[-1]
     target = dest_dir / base
-    if target.exists():
-        return target  # already there: no request, no pause
+    if target.exists() or flatten_nested_artifact(dest_dir, base) is not None:
+        return dest_dir / base  # already there (flat or just un-nested): no request, no pause
     for attempt in range(len(BACKOFF_S) + 1):
         before = set(dest_dir.glob("*.zip"))
         res = kaggle_cli("competitions", "download", SLUG, "-f", name, "-p", str(dest_dir), "-q")
         unpack_zips(dest_dir, base, before)
-        if target.exists():
+        flat = flatten_nested_artifact(dest_dir, base)
+        if flat is not None or target.exists():
             SLEEP(PAUSE_S)
-            return target
+            return dest_dir / base
         if not is_rate_limited(res) or attempt == len(BACKOFF_S):
             break
         wait = BACKOFF_S[attempt]
@@ -255,8 +292,11 @@ def download_all(names: list[str], data_dir: Path) -> list[str]:
     # Download names into data_dir/<folder>/; return the ones still missing.
     missing = []
     for folder in ("graphs", "embeddings"):
+        dest = data_dir / folder
+        dest.mkdir(parents=True, exist_ok=True)
+        flatten_download_dir(dest)  # fix leftovers from older CLI nesting before counting
         todo = [n for n in names if n.startswith(folder + "/")]
-        got = [n for n in todo if download_one(n, data_dir / folder) is not None]
+        got = [n for n in todo if download_one(n, dest) is not None]
         missing += [n for n in todo if n not in got]
         print(f"{folder}: {len(got)}/{len(todo)} on disk")
     return missing
@@ -284,12 +324,12 @@ if IN_COLAB and not IN_KAGGLE:
 md(r"""
 ## 4 · Install this package (`patchgraph_qa`)
 
-* **Colab (recommended):** put `patchgraph-qa-day3.zip` (or any `patchgraph-qa-day*.zip`) anywhere in **Google Drive → My Drive**
+* **Colab (recommended):** put `patchgraph-qa-day5.zip` (or any `patchgraph-qa-day*.zip`) anywhere in **Google Drive → My Drive**
   (top level or a few folders deep). The cell mounts Drive, finds the zip, and extracts it to
   `/content`. If the mount fails it prints what to do and stops; the browser upload
   (`files.upload()`, which hangs in some browsers) is used only if you set `USE_UPLOAD = True`.
   An unzipped folder at `/content/patchgraph-qa` also works.
-* **Kaggle:** create a private Dataset from `patchgraph-qa-day3.zip`, then *Add Input* it; the
+* **Kaggle:** create a private Dataset from `patchgraph-qa-day5.zip`, then *Add Input* it; the
   cell finds it under `/kaggle/input/`.
 * After installing, the cell puts `<repo>/src` on `sys.path` so the import works **without
   restarting the runtime** (an editable install is otherwise not visible until a restart).
@@ -304,7 +344,7 @@ import sys
 import time
 import zipfile
 
-ZIP_NAME = "patchgraph-qa-day3.zip"  # preferred upload name from `make zip`
+ZIP_NAME = "patchgraph-qa-day5.zip"  # preferred upload name from `make zip`
 # Accept day1/day2/day3 zips and Drive's "name (1).zip" renames; newest mtime wins.
 ZIP_PATTERNS = (
     "patchgraph-qa-day*.zip",
@@ -374,8 +414,8 @@ MOUNT_HELP = "\n".join([
     "  1. Re-run this cell. In the Google popup pick your account and allow ALL requested",
     "     permissions ('Select all'); leaving some unticked makes the mount fail.",
     "  2. If it still fails: Runtime > Disconnect and delete runtime, then run all cells again.",
-    "  3. Or copy patchgraph-qa-day3.zip to /content by hand (Files sidebar), run",
-    "     !unzip -q -o /content/patchgraph-qa-day3.zip -d /content   then re-run this cell.",
+    "  3. Or copy patchgraph-qa-day5.zip to /content by hand (Files sidebar), run",
+    "     !unzip -q -o /content/patchgraph-qa-day5.zip -d /content   then re-run this cell.",
     "  4. Or set USE_UPLOAD = True at the top of this cell to use the browser upload instead.",
 ])
 
@@ -637,10 +677,22 @@ else:
 md("## 10 · First QA items (callers / callees / 2-hop callers, path exists)")
 
 code(r"""
+# Prefer a task whose gold patch already maps to symbols; fall back to structural anchors
+# (non-test nodes with call degree) so callers/callees items still appear on real graphs.
+demo = first
 cov0 = patch_parse.coverage_for_patch(g0, first.patch)
-anchors = [m.node_id for m in cov0.symbols]
-print("anchors:", [(m.node_id, m.method) for m in cov0.symbols][:10])
-items = questions.generate_items(g0, first.instance_id, anchors)
+if not cov0.symbols:
+    for r in rows:
+        if r["n_symbols"] > 0:
+            demo = next(t for t in tasks if t.instance_id == r["task"])
+            g0 = pio.load_graph(pio.graph_path(GRAPHS_DIR, demo))
+            cov0 = patch_parse.coverage_for_patch(g0, demo.patch)
+            print("section-10 demo task switched to", demo.instance_id, "(first had 0 patch anchors)")
+            break
+anchors, anchor_source = patch_parse.select_anchors(g0, demo.patch)
+print("anchor_source:", anchor_source)
+print("anchors:", [(m.node_id, m.method) for m in cov0.symbols][:10] if cov0.symbols else anchors[:10])
+items = questions.generate_items(g0, demo.instance_id, anchors)
 print(f"{len(items)} items")
 for it in items[:2]:
     print("-" * 80)
@@ -651,7 +703,7 @@ print("by template:", {t: sum(i.template == t for i in items) for t in questions
 
 # Yes/no reachability items: half reachable (>= 2 calls away), half not.
 pairs = questions.sample_path_pairs(g0, 10, seed=0)
-path_items = questions.generate_path_items(g0, first.instance_id, pairs)
+path_items = questions.generate_path_items(g0, demo.instance_id, pairs)
 print(f"{len(path_items)} path_exists items (refused if context > 200 edges)")
 for it in path_items[:1] + [i for i in path_items if i.answer == ["no"]][:1]:
     print("-" * 80)
@@ -659,7 +711,62 @@ for it in path_items[:1] + [i for i in path_items if i.answer == ["no"]][:1]:
     print("ANSWER:", it.answer)
 """, "analysis")
 
-md("## 11 · Checklist of unverified items (filled from measurements where possible)")
+md(r"""
+## 11 · Non-LLM baselines on the items above (oracle + embedding heuristic)
+
+Small sanity table for the writeup: graph oracle must score ~1.0; the embedding heuristic
+is a weak ceiling that ignores edges. Re-run after section 10 so `items` / `path_items` exist.
+""")
+
+code(r"""
+from patchgraph_qa import baselines
+
+all_qa = list(items) + list(path_items)
+print(f"scoring {len(all_qa)} items "
+      f"({sum(i.template != questions.PATH_TEMPLATE for i in all_qa)} set + "
+      f"{sum(i.template == questions.PATH_TEMPLATE for i in all_qa)} path)")
+
+oracle_preds = [baselines.oracle_predict(it) for it in all_qa]
+oracle_scores = baselines.score_items(all_qa, oracle_preds)
+
+emb_path = pio.embeddings_path(EMB_DIR, demo) if EMB_DIR else None
+if emb_path is not None and emb_path.exists():
+    emb = pio.load_embeddings(emb_path)
+    emb_preds = [
+        baselines.embedding_topk_predict(it, emb, candidate_ids=[str(n) for n in g0.nodes])
+        for it in all_qa
+    ]
+    emb_scores = baselines.score_items(all_qa, emb_preds)
+else:
+    emb_scores = None
+    print("no embeddings for", demo.instance_id, "- embedding baseline skipped")
+
+def _fmt(s):
+    return (f"exact={s['exact']:.3f}  f1={s['f1']:.3f}  "
+            f"P={s['precision']:.3f}  R={s['recall']:.3f}  n={int(s['n'])}")
+
+print("oracle     :", _fmt(oracle_scores))
+if emb_scores is not None:
+    print("embedding  :", _fmt(emb_scores))
+# Per-template exact for the writeup table
+for tmpl in [*questions.TEMPLATES, questions.PATH_TEMPLATE]:
+    subset = [it for it in all_qa if it.template == tmpl]
+    if not subset:
+        continue
+    o = baselines.score_items(subset, [baselines.oracle_predict(it) for it in subset])
+    line = f"  {tmpl:<14} oracle_exact={o['exact']:.3f}"
+    if emb_scores is not None:
+        e = baselines.score_items(
+            subset,
+            [baselines.embedding_topk_predict(it, emb, candidate_ids=[str(n) for n in g0.nodes])
+             for it in subset],
+        )
+        line += f"  emb_exact={e['exact']:.3f}  emb_f1={e['f1']:.3f}"
+    print(line)
+""", "analysis")
+
+md("## 12 · Checklist of unverified items (filled from measurements where possible)")
+
 
 code(r"""
 any_tests = any(r["test_nodes"] > 0 for r in rows)

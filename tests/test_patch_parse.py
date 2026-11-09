@@ -82,3 +82,102 @@ def test_coverage_report(graph_json):
     assert rep.file_coverage == 1.0 and rep.unmatched_files == []
     empty = pp.coverage_for_patch(g, "")
     assert empty.file_coverage is None  # undefined, not forced to 0 or 1
+
+
+def test_module_matches_node_allows_omitted_leading_packages():
+    assert pp.module_matches_node("docs_src.pkg.routing", "pkg.routing.APIRouter")
+    assert pp.module_matches_node("pkg.routing", "pkg.routing.APIRouter")
+    assert pp.module_matches_node("fastapi.applications", "fastapi.applications.FastAPI")
+    assert not pp.module_matches_node("pkg.routing", "other.mod.Foo")
+
+
+def test_real_shaped_graph_matches_docs_src_patch():
+    """Regression: FastAPI-like ids omit docs_src; only 'calls' edges; many test nodes."""
+    nodes = [
+        {
+            "id": "pkg.routing.APIRouter",
+            "name": "pkg.routing.APIRouter",
+            "text": "class APIRouter:\n    def include_router(self):\n        pass\n",
+        },
+        {
+            "id": "pkg.routing.APIRouter.include_router",
+            "name": "pkg.routing.APIRouter.include_router",
+            "text": "def include_router(self):\n    return None\n",
+        },
+        {
+            "id": "tests.test_routing.test_include",
+            "name": "tests.test_routing.test_include",
+            "text": "def test_include():\n    assert True\n",
+        },
+    ]
+    for i in range(30):
+        nodes.append(
+            {
+                "id": f"tests.test_extra.test_{i}",
+                "name": f"tests.test_extra.test_{i}",
+                "text": f"def test_{i}():\n    pass\n",
+            }
+        )
+    edges = [
+        {
+            "source": "pkg.routing.APIRouter.include_router",
+            "target": "pkg.routing.APIRouter",
+            "type": "calls",
+            "key": 0,
+        },
+        {
+            "source": "tests.test_routing.test_include",
+            "target": "pkg.routing.APIRouter.include_router",
+            "type": "calls",
+            "key": 0,
+        },
+    ]
+    g = graph_from_node_link(
+        {"directed": True, "multigraph": True, "graph": {}, "nodes": nodes, "edges": edges}
+    )
+    patch = (
+        "\n".join(
+            [
+                "diff --git a/docs_src/pkg/routing.py b/docs_src/pkg/routing.py",
+                "--- a/docs_src/pkg/routing.py",
+                "+++ b/docs_src/pkg/routing.py",
+                "@@ -1,4 +1,5 @@ class APIRouter:",
+                " class APIRouter:",
+                "     def include_router(self):",
+                "-        return None",
+                "+        return self",
+            ]
+        )
+        + "\n"
+    )
+    matches = pp.map_changes_to_symbols(g, pp.parse_unified_diff(patch))
+    ids = {m.node_id for m in matches}
+    assert "pkg.routing.APIRouter" in ids
+    assert "pkg.routing.APIRouter.include_router" in ids
+    assert not any(m.node_id.startswith("tests.") for m in matches)
+    anchors, source = pp.select_anchors(g, patch)
+    assert source == "patch"
+    assert "pkg.routing.APIRouter.include_router" in anchors
+
+
+def test_select_anchors_falls_back_to_structural_when_patch_empty():
+    g = graph_from_node_link(
+        {
+            "directed": True,
+            "multigraph": True,
+            "graph": {},
+            "nodes": [
+                {"id": "pkg.a", "name": "pkg.a", "text": "def a():\n    b()\n"},
+                {"id": "pkg.b", "name": "pkg.b", "text": "def b():\n    pass\n"},
+                {"id": "tests.t", "name": "tests.t", "text": "def t():\n    a()\n"},
+            ],
+            "edges": [
+                {"source": "pkg.a", "target": "pkg.b", "type": "calls", "key": 0},
+                {"source": "tests.t", "target": "pkg.a", "type": "calls", "key": 0},
+            ],
+        }
+    )
+    anchors, source = pp.select_anchors(g, "")
+    assert source == "structural"
+    assert anchors and anchors[0] == "pkg.a"  # both directions preferred
+    assert "tests.t" not in anchors

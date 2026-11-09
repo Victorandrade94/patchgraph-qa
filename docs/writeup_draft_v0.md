@@ -11,7 +11,7 @@
 
 TODO (~80–120 words). One-paragraph pitch:
 
-Coding agents in the Gemma 4 Developer Agent competition receive repository **code graphs**, but there is no label-free check that models actually use them. **PatchGraph-QA** turns those graphs into a verifiable question–answer resource: every item (callers, callees, 2-hop callers, path existence) is generated from the provided NetworkX graphs and answered exactly by graph algorithms, so scoring needs no human labels. Questions are anchored on symbols touched by each gold patch, keeping them relevant to real repair work. We report construction details, coverage statistics (TODO), two non-LLM baselines (graph oracle vs embedding heuristic; TODO numbers), and limits (async gaps, answers relative to the provided graph, publishability). The resource is intended as a diagnostic that future Gemma-agent papers can cite.
+Coding agents in the Gemma 4 Developer Agent competition receive repository **code graphs**, but there is no label-free check that models actually use them. **PatchGraph-QA** turns those graphs into a verifiable question–answer resource: every item (callers, callees, 2-hop callers, path existence) is generated from the provided NetworkX graphs and answered exactly by graph algorithms, so scoring needs no human labels. Questions are anchored on symbols touched by each gold patch, keeping them relevant to real repair work. We report construction details, coverage statistics (mean file coverage 0.827 over 129 tasks), two non-LLM baselines (graph oracle vs embedding heuristic; baseline numbers TODO after notebook §11), and limits (async gaps, answers relative to the provided graph, publishability). The resource is intended as a diagnostic that future Gemma-agent papers can cite.
 
 ---
 
@@ -71,28 +71,31 @@ Code: https://github.com/… TODO private zip / Kaggle Dataset link after Nov 11
 
 ---
 
-## 4. Statistics (fill from notebook `01_explore_graphs.ipynb`)
+## 4. Statistics (from notebook `01_explore_graphs.ipynb`, Colab run 2026-11-09 America/Mexico_City)
 
-Run date / runtime: **TODO** (Colab / Kaggle; America/Mexico_City).
+Run date / runtime: **2026-11-09** (Colab; America/Mexico_City). Verified on all 129 tasks.
 
 | Quantity | Value |
 |---|---|
-| Tasks with a loadable graph | TODO / 129 |
-| Unique graphs (by commit) | TODO (~127) |
-| Nodes per graph (min / median / max) | TODO |
-| Edges per graph (min / median / max) | TODO |
-| Edge types observed | TODO (expect `calls`; note others) |
-| Test nodes present? | TODO (heuristic) |
-| Async nodes / await-without-out-calls | TODO |
-| Mean file coverage (patch → ≥1 symbol) | TODO |
-| Coverage methods used (`span`/`source`/`name`/`text`) | TODO |
-| Disk size `graphs/` + `embeddings/` | TODO MB |
-| Embedding shape / dtype (1 file sample) | TODO (docs claim 256-d float32) |
+| Tasks with a loadable graph | **129 / 129** |
+| Unique graphs (by commit) | ~127 (several tasks share a commit) |
+| Nodes per graph (min / median / max) | **711 / 3250 / 4597** |
+| Edge types observed | **`calls` only** (460018 edges across all graphs) |
+| Graph shape | directed multigraph; node attrs **`name` + `text` only** (no file/line spans) |
+| Test nodes present? | **YES** (heuristic; e.g. fastapi_15661: 3307/4263, mostly `tests.*`) |
+| Async nodes / await-without-out-calls | **0 async_nodes** (ast own-def); 71 nodes contain nested `async def` text; 0 await-without-out-calls candidates on the sample |
+| Mean file coverage (patch → ≥1 symbol) | **0.827** over 129 tasks (weaker `name`/`text` heuristics; no snapshots) |
+| Per-repo coverage (approx.) | Textualize/rich n=48 ~0.88; encode/httpx n=1 cov 1.0; fastapi n=67 cov ~0.78; psf/requests n=13 ~0.89 |
+| Coverage methods used (`span`/`source`/`name`/`text`) | `name` / `text` only in practice (`span` unavailable; `source` needs snapshots) |
+| Disk size `graphs/` + `embeddings/` | **422.1 MB + 467.5 MB** |
+| Embedding shape / dtype (1 file sample) | **(256,) float32**; 4263/4263 nodes had vectors; mean_norm ≈ 4.476 |
 | Embedding model identity | **UNKNOWN** — ask hosts |
-| QA items emitted (by template) | callers TODO · callees TODO · callers_2hop TODO · path_exists TODO |
-| Items refused (truncated context / empty) | TODO |
+| QA items emitted (by template) | TODO after day-5 notebook §10–11 re-run (anchor matching + baselines fixed) |
+| Items refused (truncated context / empty) | TODO (path_exists refuses context > 200 edges) |
 
-Paste the section-11 checklist printout from the notebook into an appendix if space allows.
+**Known day-4 bug (fixed day-5):** first demo task `fastapi_15661` had file coverage 0.00 because patch paths under `docs_src/...` did not match node ids that omit that prefix; section 10 printed `anchors: []`. Matching now accepts module-path suffixes; notebook falls back to a covered task / structural anchors.
+
+Paste the section-12 checklist printout from the notebook into an appendix if space allows.
 
 ---
 
@@ -105,7 +108,7 @@ Both baselines scored with `questions.score_set` (exact + P/R/F1) on set templat
 | **Graph oracle** | Return gold answer (sanity upper bound) | TODO → expect ~1.0 | TODO → ~1.0 |
 | **Embedding heuristic** | Rank other nodes by cosine similarity to anchor embedding(s); predict top-\(k\) (set) or threshold (path) | TODO | TODO |
 
-Protocol notes (fill Mon 9):
+Protocol notes (**TODO** — fill after Colab re-run of notebook §11 baselines):
 
 - Split / seed: TODO  
 - \(k\) selection: TODO (e.g. gold answer size vs fixed \(k\))  
@@ -188,4 +191,5 @@ Expected artifacts for submission: this writeup, code zip or private dataset, JS
 ## Appendix B — Changelog
 
 - **2026-11-05** — v0 skeleton (no real-data numbers yet).  
-- TODO — v1 after notebook 01 + baselines.
+- **2026-11-09** — filled §4 from Colab real-data run; noted anchor/`docs_src` bug (fixed in code, baselines still TODO).  
+- TODO — v1 after day-5 notebook re-run + baseline numbers.

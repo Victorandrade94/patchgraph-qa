@@ -50,8 +50,7 @@ def main() -> int:
             continue
         g = pio.load_graph(gp)
         n_graphs += 1
-        cov = patch_parse.coverage_for_patch(g, t.patch)
-        anchors = [m.node_id for m in cov.symbols]
+        anchors, _src = patch_parse.select_anchors(g, t.patch)
         items.extend(questions.generate_items(g, t.instance_id, anchors))
         pairs = questions.sample_path_pairs(g, args.path_pairs, seed=args.seed)
         items.extend(questions.generate_path_items(g, t.instance_id, pairs))

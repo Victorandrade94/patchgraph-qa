@@ -212,6 +212,28 @@ def _suffix_match(node_ids: Iterable[str], qualname: str) -> list[str]:
     return [n for n in node_ids if n == qualname or n.endswith("." + qualname)]
 
 
+def module_matches_node(module: str, node_id: str) -> bool:
+    """Whether ``node_id`` belongs under ``module``, allowing omitted leading packages.
+
+    Real competition graphs (FastAPI) use ids like ``pkg.routing.APIRouter`` while gold patches
+    often touch ``docs_src/pkg/routing.py`` → module ``docs_src.pkg.routing``. Exact prefix
+    matching misses those; any contiguous suffix of the module path is accepted.
+    """
+    if not module:
+        return True
+    nid = str(node_id)
+    if nid == module or nid.startswith(module + "."):
+        return True
+    if ("." + module + ".") in ("." + nid + "."):
+        return True
+    parts = module.split(".")
+    for i in range(1, len(parts)):
+        suffix = ".".join(parts[i:])
+        if nid == suffix or nid.startswith(suffix + "."):
+            return True
+    return False
+
+
 def map_changes_to_symbols(
     graph: nx.Graph,
     changes: list[FileChange],
@@ -270,9 +292,7 @@ def map_changes_to_symbols(
                     names.add(m.group(1))
         for name in sorted(names):
             for nid in node_ids:
-                if (nid.startswith(module + ".") or ("." + module + ".") in nid) and (
-                    nid.endswith("." + name)
-                ):
+                if module_matches_node(module, nid) and (nid == name or nid.endswith("." + name)):
                     add(nid, fc.path, "name", name)
 
         # 4. text: a removed line appears in node source; prefer the smallest such node.
@@ -284,8 +304,7 @@ def map_changes_to_symbols(
                 hits = [
                     (len(str(attrs_by_id[n].get("text", ""))), n)
                     for n in node_ids
-                    if t in str(attrs_by_id[n].get("text", ""))
-                    and (module.split(".")[-1] in n if module else True)
+                    if t in str(attrs_by_id[n].get("text", "")) and module_matches_node(module, n)
                 ]
                 if hits:
                     add(min(hits)[1], fc.path, "text", t[:80])
@@ -322,3 +341,70 @@ def coverage_for_patch(
     matched_files = {m.file for m in symbols}
     unmatched = [fc.path for fc in considered if fc.path not in matched_files]
     return CoverageReport(len(considered), len(considered) - len(unmatched), symbols, unmatched)
+
+
+def structural_anchors(
+    graph: nx.Graph,
+    *,
+    n: int = 20,
+    edge_types: Iterable[str] | None = ("calls",),
+    exclude_tests: bool = True,
+    min_degree: int = 1,
+) -> list[str]:
+    """Non-test nodes with typed call degree >= ``min_degree``, for when patch matching fails.
+
+    Prefers nodes that both call and are called (richer 1-hop questions). Deterministic order.
+    """
+    from patchgraph_qa.stats import is_test_node
+
+    allowed = set(edge_types) if edge_types is not None else None
+    scored: list[tuple[int, int, str]] = []
+    for node in graph.nodes:
+        nid = str(node)
+        if exclude_tests and is_test_node(nid):
+            continue
+        if graph.is_directed():
+            indeg = sum(
+                1
+                for _, _, d in graph.in_edges(node, data=True)
+                if allowed is None or d.get("type") in allowed
+            )
+            outdeg = sum(
+                1
+                for _, _, d in graph.out_edges(node, data=True)
+                if allowed is None or d.get("type") in allowed
+            )
+        else:
+            indeg = outdeg = graph.degree(node)
+        if indeg + outdeg < min_degree:
+            continue
+        # Prefer both directions, then higher total degree, then id.
+        both = 1 if indeg > 0 and outdeg > 0 else 0
+        scored.append((-both, -(indeg + outdeg), nid))
+    scored.sort()
+    return [nid for _, _, nid in scored[:n]]
+
+
+def select_anchors(
+    graph: nx.Graph,
+    patch: str,
+    *,
+    source_lookup: Callable[[str], str | None] | None = None,
+    n_fallback: int = 20,
+    edge_types: Iterable[str] | None = ("calls",),
+) -> tuple[list[str], str]:
+    """Anchors for QA generation: patch-matched symbols first, else structural fallback.
+
+    Returns ``(anchor_ids, source)`` where ``source`` is ``"patch"`` or ``"structural"``.
+    """
+    cov = coverage_for_patch(graph, patch, source_lookup=source_lookup)
+    if cov.symbols:
+        # Preserve order, drop duplicates.
+        seen: set[str] = set()
+        out: list[str] = []
+        for m in cov.symbols:
+            if m.node_id not in seen:
+                seen.add(m.node_id)
+                out.append(m.node_id)
+        return out, "patch"
+    return structural_anchors(graph, n=n_fallback, edge_types=edge_types), "structural"
