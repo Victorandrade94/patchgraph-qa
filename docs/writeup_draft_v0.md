@@ -3,15 +3,13 @@
 > **Track:** Gemma 4 Developer Agent — Paper Track (Best New Resource)  
 > **Deadline:** 2026-11-12 23:59 UTC = 17:59 America/Mexico_City  
 > **Word budget:** ≤ 3000 (Kaggle writeup)  
-> **Status:** draft v0 skeleton — replace every `TODO` with measured numbers before submit.
+> **Status:** draft with frozen Colab numbers (2026-11-09 America/Mexico_City). Remaining: host answers (embedding model, publishability), related-work polish, code link.
 
 ---
 
 ## Abstract (≤150 words)
 
-TODO (~80–120 words). One-paragraph pitch:
-
-Coding agents in the Gemma 4 Developer Agent competition receive repository **code graphs**, but there is no label-free check that models actually use them. **PatchGraph-QA** turns those graphs into a verifiable question–answer resource: every item (callers, callees, 2-hop callers, path existence) is generated from the provided NetworkX graphs and answered exactly by graph algorithms, so scoring needs no human labels. Questions are anchored on symbols touched by each gold patch, keeping them relevant to real repair work. We report construction details, coverage statistics (mean file coverage 0.827 over 129 tasks), two non-LLM baselines (graph oracle vs embedding heuristic; baseline numbers TODO after notebook §11), and limits (async gaps, answers relative to the provided graph, publishability). The resource is intended as a diagnostic that future Gemma-agent papers can cite.
+Coding agents in the Gemma 4 Developer Agent competition receive repository **code graphs**, but end-to-end repair scores do not isolate graph use. **PatchGraph-QA** turns those graphs into a label-free QA resource: every item is generated from the provided NetworkX graphs and answered by graph algorithms. Because every `calls` edge in the released files has its reverse (reciprocity min/median/max = 1.000), set templates are undirected **neighbors** / **neighbors_2hop**, plus **path_exists**. Anchors come from gold-patch symbols. On 613 items from 129 tasks, a graph oracle scores exact/F1 = 1.000; an embedding-cosine heuristic scores exact 0.191 / F1 0.318 (neighbors F1 0.137; path_exists F1 0.699). Limits include reciprocal edges, missing file/line spans, an undocumented embedding model, and pending host approval to publish derived data. The resource is a diagnostic future Gemma-agent papers can cite.
 
 ---
 
@@ -21,7 +19,7 @@ Agents in the [Gemma 4 Developer Agent Competition](https://www.kaggle.com/compe
 
 We need a **label-free, graph-grounded diagnostic**: questions whose gold answers are computed from the same graphs the agents see, so failures indicate graph-use (or graph-quality) problems rather than missing human annotations.
 
-**Claim to defend in ≤3000 words:** PatchGraph-QA is a reusable *resource* (schema + generation rules + measured stats + baselines), not a new SOTA agent.
+**Claim:** PatchGraph-QA is a reusable *resource* (schema + generation rules + measured stats + baselines), not a new SOTA agent.
 
 ---
 
@@ -29,29 +27,30 @@ We need a **label-free, graph-grounded diagnostic**: questions whose gold answer
 
 ### 2.1 Design rules
 
-- **Answers w.r.t. the provided graph.** Static analysis may miss edges (notably async). The writeup must state this explicitly.
-- **Refuse incomplete contexts.** If an adjacency-list encoding would truncate away an answer edge (or hide a path), the item is **not emitted**.
-- **Skip empty set-answers by default.** “No callers” may be a graph defect; empty answers are omitted unless `include_empty=True`.
-- **Anchor on gold patches.** Prefer symbols matched from the unified diff of each task’s gold patch (methods: `span` > `source` > `name` > `text`).
+- **Answers w.r.t. the provided graph.** Static analysis may miss edges (notably async). The writeup states this explicitly.
+- **Refuse incomplete contexts.** If an adjacency-list encoding would truncate away an answer edge (or hide a path), the item is **not emitted**. For `path_exists`, refuse when context > 200 edges.
+- **Skip empty set-answers by default.** “No neighbors” may be a graph defect; empty answers are omitted unless `include_empty=True`.
+- **Anchor on gold patches.** Prefer symbols matched from the unified diff of each task’s gold patch (methods: `span` > `source` > `name` > `text`). In practice only `name`/`text` fire (no spans; snapshots not used).
 
 ### 2.2 Templates (v0)
 
+Measured edge reciprocity is **1.000** on every graph (loader adds no reverse edges). Directed `callers` / `callees` are therefore identical to undirected neighbors, so v0 emits:
+
 | Template | Hops / type | Answer format |
 |---|---|---|
-| `callers` | 1 | set of FQNs |
-| `callees` | 1 | set of FQNs |
-| `callers_2hop` | 2 | set of FQNs |
+| `neighbors` | 1 | set of FQNs |
+| `neighbors_2hop` | 2 | set of FQNs |
 | `path_exists` | variable | `yes` / `no` (balanced reachable / unreachable pairs) |
 
-Encoding used for v0: **`adjacency_list`** (lines `A -> B` mean A calls B). Optional encoding `none` exists in code but is out of v0 scope.
+Encoding: **`adjacency_list`** (lines `A -> B` mean A calls B). Optional encoding `none` exists in code but is out of v0 scope.
 
 ### 2.3 Item schema
 
 ```json
-{"id": "16-hex sha1", "task_id": "fastapi_11194", "template": "callers",
+{"id": "16-hex sha1", "task_id": "fastapi_15588", "template": "neighbors",
  "encoding": "adjacency_list", "question": "...", "answer": ["a.b.c", "..."],
- "difficulty_hops": 1, "anchor_symbols": ["fastapi.routing.x"],
- "meta": {"edge_types": ["calls"], "answer_format": "set", "context_edges": 12,
+ "difficulty_hops": 1, "anchor_symbols": ["fastapi.sse.ServerSentEvent"],
+ "meta": {"edge_types": ["calls"], "answer_format": "set", "context_edges": 10,
           "context_truncated": false}}
 ```
 
@@ -61,111 +60,127 @@ Provenance lives in `meta`. IDs are deterministic hashes of `(task_id, template,
 
 ## 3. Construction
 
-1. Load competition `tasks.jsonl` (129 tasks; 127 unique commits — verified Oct 17 2026).
+1. Load competition `tasks.jsonl` (**129** tasks: fastapi 67, requests 13, rich 48, httpx 1; **127** unique commits — verified 2026-11-09).
 2. Resolve graphs / embeddings by **`{repo_short}_{base_commit}`** (task-id filenames 404).
 3. Parse each gold `patch`; map changed lines → graph node ids (`patchgraph_qa.patch_parse`).
-4. Generate items with NetworkX (`callers` / `callees` / `callers_2hop` / `path_exists` + refuse rules).
+4. Measure reciprocity; if ≥ 0.95, generate `neighbors` / `neighbors_2hop` / `path_exists` with refuse rules.
 5. Export JSONL (one object per line). **Do not redistribute raw competition graphs/snapshots** unless hosts confirm publishability of *derived* QA.
 
-Code: https://github.com/… TODO private zip / Kaggle Dataset link after Nov 11.
+Code: private zip / Kaggle Dataset link before submit (Nov 11–12).
 
 ---
 
-## 4. Statistics (from notebook `01_explore_graphs.ipynb`, Colab run 2026-11-09 America/Mexico_City)
+## 4. Statistics (notebook `01_explore_graphs.ipynb`, Colab 2026-11-09 America/Mexico_City)
 
-Run date / runtime: **2026-11-09** (Colab; America/Mexico_City). Verified on all 129 tasks.
+Verified on all 129 tasks / 127 unique commit graphs.
 
 | Quantity | Value |
 |---|---|
-| Tasks with a loadable graph | **129 / 129** |
-| Unique graphs (by commit) | ~127 (several tasks share a commit) |
+| Tasks / unique graphs | **129 / 127** |
+| Tasks per repo | fastapi 67, rich 48, requests 13, httpx 1 |
 | Nodes per graph (min / median / max) | **711 / 3250 / 4597** |
-| Edge types observed | **`calls` only** (460018 edges across all graphs) |
+| Edges | **`calls` only**, 460,018 across all graphs |
 | Graph shape | directed multigraph; node attrs **`name` + `text` only** (no file/line spans) |
-| Test nodes present? | **YES** (heuristic; e.g. fastapi_15661: 3307/4263, mostly `tests.*`) |
-| Async nodes / await-without-out-calls | **0 async_nodes** (ast own-def); 71 nodes contain nested `async def` text; 0 await-without-out-calls candidates on the sample |
-| Mean file coverage (patch → ≥1 symbol) | **0.825** over 129 tasks (day-5 Colab remeasure; `name`/`text` heuristics) |
-| Per-repo coverage (approx.) | Textualize/rich n=48 ~0.88; encode/httpx n=1 cov 1.0; fastapi n=67 cov ~0.78; psf/requests n=13 ~0.89 |
-| Coverage methods used (`span`/`source`/`name`/`text`) | `name` / `text` only in practice (`span` unavailable; `source` needs snapshots) |
-| Disk size `graphs/` + `embeddings/` | **422.1 MB + 466.2 MB** (27 embeddings briefly missing mid-run; graphs 127/127) |
-| Embedding shape / dtype (1 file sample) | **(256,) float32**; 4263/4263 nodes had vectors; mean_norm ≈ 4.476 |
-| Embedding model identity | **UNKNOWN** — ask hosts |
-| Edge reciprocity | **TODO** fill from §8 (day-5 demo showed mirrored `calls` edges; loader does **not** add reverses) |
-| QA items emitted (by template) | Demo: neighbors/callers collapsed — **TODO** full counts from §12 JSONL |
-| Items refused (truncated context / empty) | TODO (path_exists refuses context > 200 edges) |
+| Edge reciprocity | **min/median/max = 1.000/1.000/1.000** (every `calls` edge has its reverse in the files; loader invents none) |
+| Test nodes | **YES** (heuristic; e.g. fastapi_15661: 3307/4263, mostly `tests.*`) |
+| Async nodes | **0** by ast own-def (71 nodes contain nested `async def` text whose own kind is `def`/`class`) |
+| Mean file coverage (patch → ≥1 symbol) | **0.825** over 129 tasks (`name`/`text` only) |
+| Disk `graphs/` + `embeddings/` | **422.1 MB + 467.5 MB** |
+| Embedding shape / dtype | **(256,) float32**; 4263/4263 nodes covered on the sampled file |
+| Embedding model | **UNKNOWN** — ask hosts |
+| Full corpus JSONL | **613** items → `patchgraph_qa_v0.jsonl` |
 
-**Dataset finding (day-5/6):** On the fastapi_15588 demo, `callers` and `callees` produced **identical** contexts/answers because many `calls` edges appear with their reverse. Our loader does not invent reverse edges (`graph_from_node_link` only materializes listed links). Day-6 measures reciprocity per graph; when ≥0.95 we emit undirected `neighbors` / `neighbors_2hop` instead of callers/callees (keep `path_exists`). Empty `callers_2hop` on a reciprocal star hub is expected.
+**Corpus composition**
 
-**Known day-4 bug (fixed day-5):** first demo task `fastapi_15661` had file coverage 0.00 because patch paths under `docs_src/...` did not match node ids that omit that prefix; section 10 printed `anchors: []`. Matching now accepts module-path suffixes; notebook falls back to a covered task / structural anchors.
+| By template | n | By repo | n |
+|---|---:|---|---:|
+| `neighbors` | 272 | fastapi/fastapi | 405 |
+| `neighbors_2hop` | 195 | Textualize/rich | 164 |
+| `path_exists` | 146 | psf/requests | 38 |
+| **total** | **613** | encode/httpx | 6 |
 
-Paste the section-12 checklist printout from the notebook into an appendix if space allows.
+**Day-5 bug (fixed):** first demo task `fastapi_15661` had coverage 0.00 because patch paths under `docs_src/...` did not match node ids that omit that prefix. Matching now accepts module-path suffixes; the notebook falls back to a covered task / structural anchors.
 
 ---
 
-## 5. Baselines (non-LLM)
+## 5. Baselines (non-LLM) — FROZEN 2026-11-09
 
-Both baselines scored with `questions.score_set` (exact + P/R/F1) on set templates; accuracy on `path_exists`.
+Scored with `questions.score_set` (exact + P/R/F1) on set templates; accuracy on `path_exists`. Protocol: seed=0; ≤3 anchors + ≤5 path pairs per task; \(k = \max(1, |\mathrm{gold}|)\); all 127 embedding files loaded (0 missing).
 
-| Baseline | Idea | Exact / F1 (set) | Acc (`path_exists`) |
-|---|---|---|---|
-| **Graph oracle** | Return gold answer (sanity upper bound) | demo exact/F1 **1.0** (11 items); **TODO** full §12 | demo **1.0**; **TODO** full |
-| **Embedding heuristic** | Rank other nodes by cosine similarity to anchor embedding(s); predict top-\(k\) (set) or threshold (path) | demo exact **0.455** F1 **0.600** | demo exact **0.556** |
+### Full corpus (n = 613)
 
-Protocol notes (**TODO** — freeze after Colab §12 full corpus):
+| Baseline | Exact | F1 | P | R | n |
+|---|---:|---:|---:|---:|---:|
+| **Graph oracle** | 1.000 | 1.000 | 1.000 | 1.000 | 613 |
+| **Embedding cosine** | 0.191 | 0.318 | 0.318 | 0.318 | 613 |
 
-- Split / seed: seed=0; ≤3 anchors + ≤5 path pairs per task  
-- \(k\) selection: `k = max(1, len(gold))`  
-- Missing embedding keys/files: skip / predict empty or `no`; count missing  
-- Subset size: **TODO** items from §12 over 129 tasks  
-- Templates: directed callers/callees **or** neighbors when reciprocity high  
+### Embedding cosine by template
 
-**Gemma E2B smoke** (~50 items): nice-to-have only; omit if time dies.
+| Template | n | Oracle exact | Emb exact | Emb F1 |
+|---|---:|---:|---:|---:|
+| `neighbors` | 272 | 1.000 | 0.026 | 0.137 |
+| `neighbors_2hop` | 195 | 1.000 | 0.041 | 0.284 |
+| `path_exists` | 146 | 1.000 | 0.699 | 0.699 |
+
+### Demo sanity (fastapi_15588, 10 items)
+
+| Baseline | Exact | F1 |
+|---|---:|---:|
+| Graph oracle | 1.000 | 1.000 |
+| Embedding cosine | 0.500 | 0.580 |
+
+Embedding similarity alone is a weak substitute for graph structure on neighborhood queries; path existence is easier for the heuristic. That gap is the resource’s main diagnostic signal.
+
+Gemma E2B smoke (~50 items): nice-to-have only; omit if time dies.
 
 ---
 
 ## 6. Limits and ethics
 
+- **Reciprocal edges.** Every provided `calls` edge has its reverse, so callers ≡ callees; templates are undirected neighbors. Do not interpret neighbor sets as directed call polarity.
+- **No file/line spans** on nodes; patch→symbol matching uses weaker `name`/`text` heuristics (mean coverage 0.825).
+- **Undocumented embedding model** for the 256-d vectors; baselines treat them as opaque.
+- **Publishability** of derived JSONL/graphs needs an explicit host OK (forum ask drafted, not yet answered). Competition rules forbid redistributing Competition Data.
+- **Heuristic test/async detection** can false-positive/negative (0 async own-defs despite nested `async def` text; large `tests.*` share).
+- **Repo imbalance.** Corpus is fastapi-heavy (405/613 items); rich/requests/httpx are thinner.
 - Answers are correct **only relative to the provided graph**; async call edges may be missing (hosts’ async note).
-- Patch→symbol coverage without snapshots relies on weaker `name`/`text` heuristics → lower confidence.
-- Competition rules forbid redistributing Competition Data; derived JSONL/graphs need an explicit host OK (see forum ask).
-- Heuristic test/async detection can false-positive/negative; report diagnostics, do not over-claim.
 - No human labels → cannot measure “semantic” correctness beyond the graph.
 
 ---
 
 ## 7. How a Gemma agent paper could use this
 
-1. Run the agent (or a graph tool-using ablations) on PatchGraph-QA items.  
+1. Run the agent (or graph tool-using ablations) on PatchGraph-QA items.  
 2. Compare against the two baselines above.  
-3. Break down errors by template / hops / async-heavy repos.  
+3. Break down errors by template / hops / repo.  
 4. Cite PatchGraph-QA as a **diagnostic resource**, then report the main repair leaderboard separately.
 
 ---
 
-## 8. Related work (bullets; expand Sun 8)
+## 8. Related work (bullets; expand before submit)
 
 - GraphQA / graph-based QA benchmarks (general graphs, not code-repair anchored).  
 - LocAgent, RepoGraph — agentic repo navigation with graphs.  
 - CG-Bench, TraceEval — code/graph evaluation adjacent to call-structure reasoning.  
 - Competition code-graph tools (`get_code_neighbors`, `get_code_subgraph`).  
 
-TODO: 1–2 sentence contrast each; emphasize **label-free answers + gold-patch anchors + refuse-incomplete-context**.
+Contrast: **label-free answers + gold-patch anchors + refuse-incomplete-context + measured reciprocity**.
 
 ---
 
-## 9. Data card (short; expand Wed 11)
+## 9. Data card (short)
 
 | Field | Content |
 |---|---|
 | Name | PatchGraph-QA v0 |
 | Task | Verifiable QA over competition code graphs |
 | Source | Derived from Gemma 4 Developer Agent competition files |
-| Size | TODO items · TODO tasks · 4 templates |
+| Size | 613 items · 129 tasks · 3 templates (`neighbors`, `neighbors_2hop`, `path_exists`) |
 | Labels | Algorithmic (NetworkX), not human |
-| Splits | TODO (e.g. by repo / by commit) |
-| License (code) | TODO (MIT or Apache-2.0 before publish) |
+| Splits | None frozen; natural split by repo / commit |
+| License (code) | TBD before publish (MIT or Apache-2.0) |
 | License (data) | Competition rules; derived publishability TBD |
-| Risks | Graph incompleteness; possible leakage if raw graphs shipped |
+| Risks | Graph incompleteness; reciprocal edges; possible leakage if raw graphs shipped; fastapi-heavy mix |
 | Contact | Víctor Andrade / Kaggle writeup |
 
 ---
@@ -195,5 +210,5 @@ Expected artifacts for submission: this writeup, code zip or private dataset, JS
 ## Appendix B — Changelog
 
 - **2026-11-05** — v0 skeleton (no real-data numbers yet).  
-- **2026-11-09** — filled §4 from Colab; day-5 demo baselines; reciprocity finding → neighbors templates (day-6).  
-- TODO — v1 after day-6 §12 full JSONL + reciprocity numbers + frozen baselines.
+- **2026-11-09** — filled §4 from Colab; day-5 demo; reciprocity → neighbors templates (day-6).  
+- **2026-11-09 (evening)** — day-7: frozen full-corpus baselines (n=613), reciprocity 1.000/1.000/1.000, results table, limitations section; checklist updated.

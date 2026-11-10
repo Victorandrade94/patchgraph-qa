@@ -38,7 +38,7 @@ measures them instead of assuming them.
 |---|---|---|
 | Data | Click *Add Input → Competition → gemma-4-developer-agent*. Files are mounted read-only; nothing to download. | Downloaded with the Kaggle CLI using your API token. Only `tasks.jsonl`, `graphs/`, `embeddings/` (not the 22 GB snapshots). |
 | Credentials | Not needed for the data | Colab Secret **`KAGGLE_API_TOKEN`** (new-style token from kaggle.com → Settings → API Tokens). Legacy `kaggle.json` is a fallback. |
-| Package | Upload `patchgraph-qa-day6.zip` (or any `patchgraph-qa-day*.zip`) as a private Kaggle Dataset, add it as input | Put `patchgraph-qa-day6.zip` in Google Drive → My Drive (newest copy is used) |
+| Package | Upload `patchgraph-qa-day7.zip` (or any `patchgraph-qa-day*.zip`) as a private Kaggle Dataset, add it as input | Put `patchgraph-qa-day7.zip` in Google Drive → My Drive (newest copy is used) |
 
 The notebook auto-detects where it is running (Kaggle = `KAGGLE_KERNEL_RUN_TYPE` is set;
 Colab = `google.colab` loaded or `COLAB_RELEASE_TAG` set; a `/kaggle/input` folder alone means
@@ -349,12 +349,12 @@ if IN_COLAB and not IN_KAGGLE:
 md(r"""
 ## 4 · Install this package (`patchgraph_qa`)
 
-* **Colab (recommended):** put `patchgraph-qa-day6.zip` (or any `patchgraph-qa-day*.zip`) anywhere in **Google Drive → My Drive**
+* **Colab (recommended):** put `patchgraph-qa-day7.zip` (or any `patchgraph-qa-day*.zip`) anywhere in **Google Drive → My Drive**
   (top level or a few folders deep). The cell mounts Drive, finds the zip, and extracts it to
   `/content`. If the mount fails it prints what to do and stops; the browser upload
   (`files.upload()`, which hangs in some browsers) is used only if you set `USE_UPLOAD = True`.
   An unzipped folder at `/content/patchgraph-qa` also works.
-* **Kaggle:** create a private Dataset from `patchgraph-qa-day6.zip`, then *Add Input* it; the
+* **Kaggle:** create a private Dataset from `patchgraph-qa-day7.zip`, then *Add Input* it; the
   cell finds it under `/kaggle/input/`.
 * After installing, the cell puts `<repo>/src` on `sys.path` so the import works **without
   restarting the runtime** (an editable install is otherwise not visible until a restart).
@@ -369,7 +369,7 @@ import sys
 import time
 import zipfile
 
-ZIP_NAME = "patchgraph-qa-day6.zip"  # preferred upload name from `make zip`
+ZIP_NAME = "patchgraph-qa-day7.zip"  # preferred upload name from `make zip`
 # Accept day1/day2/day3 zips and Drive's "name (1).zip" renames; newest mtime wins.
 ZIP_PATTERNS = (
     "patchgraph-qa-day*.zip",
@@ -439,8 +439,8 @@ MOUNT_HELP = "\n".join([
     "  1. Re-run this cell. In the Google popup pick your account and allow ALL requested",
     "     permissions ('Select all'); leaving some unticked makes the mount fail.",
     "  2. If it still fails: Runtime > Disconnect and delete runtime, then run all cells again.",
-    "  3. Or copy patchgraph-qa-day6.zip to /content by hand (Files sidebar), run",
-    "     !unzip -q -o /content/patchgraph-qa-day6.zip -d /content   then re-run this cell.",
+    "  3. Or copy patchgraph-qa-day7.zip to /content by hand (Files sidebar), run",
+    "     !unzip -q -o /content/patchgraph-qa-day7.zip -d /content   then re-run this cell.",
     "  4. Or set USE_UPLOAD = True at the top of this cell to use the browser upload instead.",
 ])
 

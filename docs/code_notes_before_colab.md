@@ -38,3 +38,10 @@
 - callers_2hop empty on reciprocal star hub = expected; leaf neighbors_2hop reaches other leaves.
 - Download: skip kaggle+pause when files on disk; listing skipped when graphs already present.
 - §12 full corpus JSONL + lazy embedding baselines (`patchgraph_qa.corpus`).
+
+## 2026-11-09 day-7
+
+Frozen full-corpus Colab paste into writeup: reciprocity 1.000/1.000/1.000; 613 items
+(neighbors 272, neighbors_2hop 195, path_exists 146); FULL embedding exact 0.191 F1 0.318;
+demo fastapi_15588 (10 items) embedding exact 0.500 F1 0.580. Disk embeddings 467.5 MB.
+Checklist § Mon/Sat/Fri items ticked; Makefile/ZIP_NAME → day7.

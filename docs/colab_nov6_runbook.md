@@ -10,7 +10,7 @@ Timezone: America/Mexico_City.
    ```bash
    cd /workspace/patchgraph-qa && make zip
    ```
-   Upload the resulting `../patchgraph-qa-day6.zip` (or any `patchgraph-qa-day*.zip`) to **Google Drive → My Drive** (≤3 folders deep). Newest match wins.  
+   Upload the resulting `../patchgraph-qa-day7.zip` (or any `patchgraph-qa-day*.zip`) to **Google Drive → My Drive** (≤3 folders deep). Newest match wins.  
 4. Optional: open `docs/forum_publishability_ask.md`, post after the notebook run.
 
 ## Exact notebook
