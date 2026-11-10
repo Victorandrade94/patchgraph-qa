@@ -185,6 +185,8 @@ make install && make test
 
 [8] Liu, X., Lan, B., Hu, Z., Liu, Y., Zhang, Z., Wang, F., Shieh, M., & Zhou, W. (2025). CodexGraph: Bridging Large Language Models and Code Repositories via Code Graph Databases. *NAACL*. https://arxiv.org/abs/2408.03910
 
+[9] Markowitz, E., Perozzi, B., Rózemberczki, B., Cameron, G., Hemmati, H., Li, Y., Galkin, M., Farhadi, M., Holbrook, R., & Oldacre, A. (2026). Google - The Gemma 4 Developer Agent Paper Track. Kaggle. https://www.kaggle.com/competitions/gemma-4-developer-agent-paper
+
 ---
 
 ## Appendix — Open host questions
@@ -198,3 +200,4 @@ make install && make test
 - **2026-11-05** — v0 skeleton.  
 - **2026-11-09** — Colab stats; reciprocity → neighbors templates; full-corpus baselines (n=613).  
 - **2026-11-09 (late)** — related-work citations, Apache-2.0, availability/data card, word-count polish for submission.
+- **2026-11-10** — official competition citation; repository made public (code only, no derived data).
