@@ -84,14 +84,17 @@ Run date / runtime: **2026-11-09** (Colab; America/Mexico_City). Verified on all
 | Graph shape | directed multigraph; node attrs **`name` + `text` only** (no file/line spans) |
 | Test nodes present? | **YES** (heuristic; e.g. fastapi_15661: 3307/4263, mostly `tests.*`) |
 | Async nodes / await-without-out-calls | **0 async_nodes** (ast own-def); 71 nodes contain nested `async def` text; 0 await-without-out-calls candidates on the sample |
-| Mean file coverage (patch → ≥1 symbol) | **0.827** over 129 tasks (weaker `name`/`text` heuristics; no snapshots) |
+| Mean file coverage (patch → ≥1 symbol) | **0.825** over 129 tasks (day-5 Colab remeasure; `name`/`text` heuristics) |
 | Per-repo coverage (approx.) | Textualize/rich n=48 ~0.88; encode/httpx n=1 cov 1.0; fastapi n=67 cov ~0.78; psf/requests n=13 ~0.89 |
 | Coverage methods used (`span`/`source`/`name`/`text`) | `name` / `text` only in practice (`span` unavailable; `source` needs snapshots) |
-| Disk size `graphs/` + `embeddings/` | **422.1 MB + 467.5 MB** |
+| Disk size `graphs/` + `embeddings/` | **422.1 MB + 466.2 MB** (27 embeddings briefly missing mid-run; graphs 127/127) |
 | Embedding shape / dtype (1 file sample) | **(256,) float32**; 4263/4263 nodes had vectors; mean_norm ≈ 4.476 |
 | Embedding model identity | **UNKNOWN** — ask hosts |
-| QA items emitted (by template) | TODO after day-5 notebook §10–11 re-run (anchor matching + baselines fixed) |
+| Edge reciprocity | **TODO** fill from §8 (day-5 demo showed mirrored `calls` edges; loader does **not** add reverses) |
+| QA items emitted (by template) | Demo: neighbors/callers collapsed — **TODO** full counts from §12 JSONL |
 | Items refused (truncated context / empty) | TODO (path_exists refuses context > 200 edges) |
+
+**Dataset finding (day-5/6):** On the fastapi_15588 demo, `callers` and `callees` produced **identical** contexts/answers because many `calls` edges appear with their reverse. Our loader does not invent reverse edges (`graph_from_node_link` only materializes listed links). Day-6 measures reciprocity per graph; when ≥0.95 we emit undirected `neighbors` / `neighbors_2hop` instead of callers/callees (keep `path_exists`). Empty `callers_2hop` on a reciprocal star hub is expected.
 
 **Known day-4 bug (fixed day-5):** first demo task `fastapi_15661` had file coverage 0.00 because patch paths under `docs_src/...` did not match node ids that omit that prefix; section 10 printed `anchors: []`. Matching now accepts module-path suffixes; notebook falls back to a covered task / structural anchors.
 
@@ -105,15 +108,16 @@ Both baselines scored with `questions.score_set` (exact + P/R/F1) on set templat
 
 | Baseline | Idea | Exact / F1 (set) | Acc (`path_exists`) |
 |---|---|---|---|
-| **Graph oracle** | Return gold answer (sanity upper bound) | TODO → expect ~1.0 | TODO → ~1.0 |
-| **Embedding heuristic** | Rank other nodes by cosine similarity to anchor embedding(s); predict top-\(k\) (set) or threshold (path) | TODO | TODO |
+| **Graph oracle** | Return gold answer (sanity upper bound) | demo exact/F1 **1.0** (11 items); **TODO** full §12 | demo **1.0**; **TODO** full |
+| **Embedding heuristic** | Rank other nodes by cosine similarity to anchor embedding(s); predict top-\(k\) (set) or threshold (path) | demo exact **0.455** F1 **0.600** | demo exact **0.556** |
 
-Protocol notes (**TODO** — fill after Colab re-run of notebook §11 baselines):
+Protocol notes (**TODO** — freeze after Colab §12 full corpus):
 
-- Split / seed: TODO  
-- \(k\) selection: TODO (e.g. gold answer size vs fixed \(k\))  
-- Missing embedding keys: TODO handling  
-- Subset size: TODO items / TODO tasks  
+- Split / seed: seed=0; ≤3 anchors + ≤5 path pairs per task  
+- \(k\) selection: `k = max(1, len(gold))`  
+- Missing embedding keys/files: skip / predict empty or `no`; count missing  
+- Subset size: **TODO** items from §12 over 129 tasks  
+- Templates: directed callers/callees **or** neighbors when reciprocity high  
 
 **Gemma E2B smoke** (~50 items): nice-to-have only; omit if time dies.
 
@@ -191,5 +195,5 @@ Expected artifacts for submission: this writeup, code zip or private dataset, JS
 ## Appendix B — Changelog
 
 - **2026-11-05** — v0 skeleton (no real-data numbers yet).  
-- **2026-11-09** — filled §4 from Colab real-data run; noted anchor/`docs_src` bug (fixed in code, baselines still TODO).  
-- TODO — v1 after day-5 notebook re-run + baseline numbers.
+- **2026-11-09** — filled §4 from Colab; day-5 demo baselines; reciprocity finding → neighbors templates (day-6).  
+- TODO — v1 after day-6 §12 full JSONL + reciprocity numbers + frozen baselines.

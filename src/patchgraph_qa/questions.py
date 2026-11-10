@@ -1,9 +1,9 @@
 """QA item schema and question templates answered exactly by NetworkX.
 
-Templates: ``callers`` and ``callees`` (1 hop), ``callers_2hop`` (callers of callers) and
-``path_exists`` (is there a directed call path from A to B?). Answers are computed from the
-graph only. Note the graph itself may be wrong (static analysis misses edges), so an answer is
-"correct with respect to the provided graph", which the paper must state explicitly.
+Directed templates: ``callers`` / ``callees`` (1 hop), ``callers_2hop``.
+When measured edge reciprocity is high, those collapse to undirected ``neighbors`` /
+``neighbors_2hop`` (see ``templates_for_graph``). ``path_exists`` stays directed.
+Answers are computed from the graph only ("correct w.r.t. the provided graph").
 """
 
 from __future__ import annotations
@@ -18,13 +18,17 @@ from typing import Any
 
 import networkx as nx
 
-#: Single-anchor templates handled by ``make_item`` / ``generate_items``.
+#: Directed single-anchor templates (used when reciprocity is low).
 TEMPLATES = ("callers", "callees", "callers_2hop")
+#: Undirected single-anchor templates (used when reciprocity is high — see templates_for_graph).
+RECIPROCAL_TEMPLATES = ("neighbors", "neighbors_2hop")
 #: Two-anchor yes/no template handled by ``make_path_item`` / ``generate_path_items``.
 PATH_TEMPLATE = "path_exists"
 ENCODINGS = ("adjacency_list", "none")
 # "calls" is the example edge type on the data page; whether other types exist is unverified.
 DEFAULT_EDGE_TYPES: tuple[str, ...] = ("calls",)
+#: Collapse callers/callees into neighbors when this fraction of edges have a reverse.
+RECIPROCITY_COLLAPSE_THRESHOLD = 0.95
 
 
 @dataclass(frozen=True)
@@ -116,6 +120,61 @@ def two_hop_edges(
     return needed
 
 
+def neighbors(
+    graph: nx.Graph, symbol: str, edge_types: Iterable[str] | None = DEFAULT_EDGE_TYPES
+) -> list[str]:
+    """Distinct nodes sharing a typed edge with ``symbol`` in either direction (self excluded)."""
+    return sorted(set(callers(graph, symbol, edge_types)) | set(callees(graph, symbol, edge_types)))
+
+
+def neighbors_2hop(
+    graph: nx.Graph, symbol: str, edge_types: Iterable[str] | None = DEFAULT_EDGE_TYPES
+) -> list[str]:
+    """Distinct nodes at undirected distance 2 via typed edges (not self, not 1-hop neighbors).
+
+    On a reciprocal star, the hub has none; a leaf reaches the other leaves through the hub.
+    Empty ``callers_2hop`` on a hub is therefore expected, not a loader bug.
+    """
+    one = set(neighbors(graph, symbol, edge_types))
+    out: set[str] = set()
+    for mid in one:
+        out.update(neighbors(graph, mid, edge_types))
+    out -= one
+    out.discard(symbol)
+    return sorted(out)
+
+
+def neighbors_2hop_edges(
+    graph: nx.Graph, symbol: str, edge_types: Iterable[str] | None = DEFAULT_EDGE_TYPES
+) -> set[tuple[str, str]]:
+    """Undirected edges witnessing each neighbors_2hop answer (both directions if present)."""
+    one = set(neighbors(graph, symbol, edge_types))
+    two = set(neighbors_2hop(graph, symbol, edge_types))
+    needed: set[tuple[str, str]] = set()
+    for mid in one:
+        mid_n = set(neighbors(graph, mid, edge_types))
+        for x in mid_n & two:
+            # record whatever directed edges exist between the pairs
+            for a, b in ((symbol, mid), (mid, symbol), (mid, x), (x, mid)):
+                if graph.has_edge(a, b):
+                    needed.add((a, b))
+    return needed
+
+
+def templates_for_graph(
+    graph: nx.Graph,
+    edge_types: Iterable[str] | None = DEFAULT_EDGE_TYPES,
+    threshold: float = RECIPROCITY_COLLAPSE_THRESHOLD,
+) -> tuple[str, ...]:
+    """Pick single-anchor templates from measured reciprocity (no causal claim)."""
+    from patchgraph_qa.stats import edge_reciprocity
+
+    rec = float(edge_reciprocity(graph, edge_types)["reciprocity"])
+    if rec >= threshold:
+        return RECIPROCAL_TEMPLATES
+    return TEMPLATES
+
+
 def typed_digraph(
     graph: nx.Graph, edge_types: Iterable[str] | None = DEFAULT_EDGE_TYPES
 ) -> nx.DiGraph:
@@ -175,6 +234,14 @@ _QUESTION = {
         "X calls some Y and Y calls `{s}` (X, Y and `{s}` all different). X may also call "
         "`{s}` directly."
     ),
+    "neighbors": (
+        "Which functions or methods share a call-graph edge with `{s}` (either direction)? "
+        "List every distinct neighbor."
+    ),
+    "neighbors_2hop": (
+        "Which functions or methods are exactly two call-graph edges away from `{s}` "
+        "(undirected), and are not direct neighbors of `{s}`? List every distinct such node."
+    ),
 }
 
 
@@ -189,14 +256,21 @@ def make_item(
 ) -> QAItem | None:
     """Build one QA item, or return ``None`` when it cannot be posed honestly
     (anchor missing from graph, or truncated context no longer contains every answer edge)."""
-    if template not in TEMPLATES:
-        raise ValueError(f"unknown template {template!r}; known: {TEMPLATES}")
+    known = TEMPLATES + RECIPROCAL_TEMPLATES
+    if template not in known:
+        raise ValueError(f"unknown template {template!r}; known: {known}")
     if encoding not in ENCODINGS:
         raise ValueError(f"unknown encoding {encoding!r}; known: {ENCODINGS}")
     if anchor not in graph:
         return None
     et = tuple(edge_types) if edge_types is not None else None
-    answer_fn = {"callers": callers, "callees": callees, "callers_2hop": callers_2hop}[template]
+    answer_fn = {
+        "callers": callers,
+        "callees": callees,
+        "callers_2hop": callers_2hop,
+        "neighbors": neighbors,
+        "neighbors_2hop": neighbors_2hop,
+    }[template]
     answer = answer_fn(graph, anchor, et)
     meta: dict[str, Any] = {"edge_types": list(et) if et else None, "answer_format": "set"}
 
@@ -205,13 +279,22 @@ def make_item(
         text, edges, truncated = adjacency_context(
             graph, anchor, edge_types=et, max_edges=max_context_edges
         )
+        edge_set = set(edges)
         if template == "callers":
             needed = {(a, anchor) for a in answer}
+            complete = needed.issubset(edge_set)
         elif template == "callees":
             needed = {(anchor, a) for a in answer}
-        else:
+            complete = needed.issubset(edge_set)
+        elif template == "callers_2hop":
             needed = two_hop_edges(graph, anchor, et)
-        complete = needed.issubset(set(edges))
+            complete = needed.issubset(edge_set)
+        elif template == "neighbors":
+            # Either direction of the undirected edge is enough to support the answer.
+            complete = all((a, anchor) in edge_set or (anchor, a) in edge_set for a in answer)
+        else:  # neighbors_2hop
+            needed = neighbors_2hop_edges(graph, anchor, et)
+            complete = needed.issubset(edge_set)
         if not complete:
             return None  # never ask a question whose answer the context cannot support
         meta.update({"context_edges": len(edges), "context_truncated": truncated})
@@ -226,6 +309,7 @@ def make_item(
             " Answer with a JSON list of fully qualified names; answer [] if there are none."
         )
 
+    hops = 2 if template in ("callers_2hop", "neighbors_2hop") else 1
     return QAItem(
         id=make_id(task_id, template, encoding, [anchor]),
         task_id=task_id,
@@ -233,7 +317,7 @@ def make_item(
         encoding=encoding,
         question=question,
         answer=answer,
-        difficulty_hops=2 if template == "callers_2hop" else 1,
+        difficulty_hops=hops,
         anchor_symbols=[anchor],
         meta=meta,
     )
@@ -243,16 +327,24 @@ def generate_items(
     graph: nx.Graph,
     task_id: str,
     anchors: Iterable[str],
-    templates: Iterable[str] = TEMPLATES,
+    templates: Iterable[str] | None = None,
     encodings: Iterable[str] = ("adjacency_list",),
     edge_types: Iterable[str] | None = DEFAULT_EDGE_TYPES,
     include_empty: bool = False,
 ) -> list[QAItem]:
     """All items for the given anchors. Empty answers are skipped by default because an empty
-    answer may reflect a missing edge (a graph defect) rather than a true absence."""
+    answer may reflect a missing edge (a graph defect) rather than a true absence.
+
+    When ``templates`` is ``None``, pick directed vs reciprocal templates from measured
+    edge reciprocity (``templates_for_graph``).
+    """
+    if templates is None:
+        tmpls: Iterable[str] = templates_for_graph(graph, edge_types)
+    else:
+        tmpls = templates
     items: list[QAItem] = []
     for anchor in dict.fromkeys(anchors):  # dedupe, keep order
-        for t in templates:
+        for t in tmpls:
             for enc in encodings:
                 item = make_item(graph, task_id, t, anchor, enc, edge_types)
                 if item is None or (not item.answer and not include_empty):
@@ -391,4 +483,3 @@ def write_jsonl(path: str | os.PathLike[str], items: Iterable[QAItem]) -> int:
             fh.write("\n")
             n += 1
     return n
-

@@ -38,7 +38,7 @@ measures them instead of assuming them.
 |---|---|---|
 | Data | Click *Add Input → Competition → gemma-4-developer-agent*. Files are mounted read-only; nothing to download. | Downloaded with the Kaggle CLI using your API token. Only `tasks.jsonl`, `graphs/`, `embeddings/` (not the 22 GB snapshots). |
 | Credentials | Not needed for the data | Colab Secret **`KAGGLE_API_TOKEN`** (new-style token from kaggle.com → Settings → API Tokens). Legacy `kaggle.json` is a fallback. |
-| Package | Upload `patchgraph-qa-day5.zip` (or any `patchgraph-qa-day*.zip`) as a private Kaggle Dataset, add it as input | Put `patchgraph-qa-day5.zip` in Google Drive → My Drive (newest copy is used) |
+| Package | Upload `patchgraph-qa-day6.zip` (or any `patchgraph-qa-day*.zip`) as a private Kaggle Dataset, add it as input | Put `patchgraph-qa-day6.zip` in Google Drive → My Drive (newest copy is used) |
 
 The notebook auto-detects where it is running (Kaggle = `KAGGLE_KERNEL_RUN_TYPE` is set;
 Colab = `google.colab` loaded or `COLAB_RELEASE_TAG` set; a `/kaggle/input` folder alone means
@@ -152,13 +152,24 @@ import subprocess
 DATA = WORK / "data"
 DATA.mkdir(parents=True, exist_ok=True)
 
-def kaggle_cli(*args: str) -> subprocess.CompletedProcess:
-    # Inherits KAGGLE_API_TOKEN from this kernel's environment.
-    return subprocess.run(["kaggle", *args], capture_output=True, text=True)
+def kaggle_cli(*args: str, timeout: int | None = 120) -> subprocess.CompletedProcess:
+    # Inherits KAGGLE_API_TOKEN from this kernel's environment. timeout avoids hangs.
+    try:
+        return subprocess.run(
+            ["kaggle", *args], capture_output=True, text=True, timeout=timeout
+        )
+    except subprocess.TimeoutExpired as exc:
+        out = (exc.stdout or "") if isinstance(exc.stdout, str) else ""
+        err = (exc.stderr or "") if isinstance(exc.stderr, str) else f"timeout after {timeout}s"
+        return subprocess.CompletedProcess(exc.cmd, 124, out, err)
 
 if IN_COLAB and not IN_KAGGLE:
-    res = kaggle_cli("competitions", "files", SLUG)
-    print(res.stdout[:2000] or res.stderr[-500:])
+    n_graphs = len(list((DATA / "graphs").glob("*.json"))) if (DATA / "graphs").is_dir() else 0
+    if n_graphs > 0:
+        print(f"Skipping competition file listing ({n_graphs} graphs already under {DATA}/graphs).")
+    else:
+        res = kaggle_cli("competitions", "files", SLUG, timeout=60)
+        print((res.stdout[:2000] or res.stderr[-500:]) or "(empty listing / timed out)")
 """, "setup")
 
 md(r"""
@@ -290,15 +301,29 @@ def download_one(name: str, dest_dir: Path) -> Path | None:
 
 def download_all(names: list[str], data_dir: Path) -> list[str]:
     # Download names into data_dir/<folder>/; return the ones still missing.
+    # Fast path: when everything is already flat on disk, no kaggle calls and no pauses.
     missing = []
     for folder in ("graphs", "embeddings"):
         dest = data_dir / folder
         dest.mkdir(parents=True, exist_ok=True)
         flatten_download_dir(dest)  # fix leftovers from older CLI nesting before counting
         todo = [n for n in names if n.startswith(folder + "/")]
-        got = [n for n in todo if download_one(n, dest) is not None]
-        missing += [n for n in todo if n not in got]
-        print(f"{folder}: {len(got)}/{len(todo)} on disk")
+        present, need = [], []
+        for n in todo:
+            base = n.split("/")[-1]
+            if (dest / base).exists() or flatten_nested_artifact(dest, base) is not None:
+                present.append(n)
+            else:
+                need.append(n)
+        if need:
+            print(f"{folder}: {len(present)}/{len(todo)} on disk, fetching {len(need)}...")
+            for n in need:
+                if download_one(n, dest) is not None:
+                    present.append(n)
+                else:
+                    missing.append(n)
+        else:
+            print(f"{folder}: {len(present)}/{len(todo)} on disk (skip download)")
     return missing
 
 
@@ -324,12 +349,12 @@ if IN_COLAB and not IN_KAGGLE:
 md(r"""
 ## 4 · Install this package (`patchgraph_qa`)
 
-* **Colab (recommended):** put `patchgraph-qa-day5.zip` (or any `patchgraph-qa-day*.zip`) anywhere in **Google Drive → My Drive**
+* **Colab (recommended):** put `patchgraph-qa-day6.zip` (or any `patchgraph-qa-day*.zip`) anywhere in **Google Drive → My Drive**
   (top level or a few folders deep). The cell mounts Drive, finds the zip, and extracts it to
   `/content`. If the mount fails it prints what to do and stops; the browser upload
   (`files.upload()`, which hangs in some browsers) is used only if you set `USE_UPLOAD = True`.
   An unzipped folder at `/content/patchgraph-qa` also works.
-* **Kaggle:** create a private Dataset from `patchgraph-qa-day5.zip`, then *Add Input* it; the
+* **Kaggle:** create a private Dataset from `patchgraph-qa-day6.zip`, then *Add Input* it; the
   cell finds it under `/kaggle/input/`.
 * After installing, the cell puts `<repo>/src` on `sys.path` so the import works **without
   restarting the runtime** (an editable install is otherwise not visible until a restart).
@@ -344,7 +369,7 @@ import sys
 import time
 import zipfile
 
-ZIP_NAME = "patchgraph-qa-day5.zip"  # preferred upload name from `make zip`
+ZIP_NAME = "patchgraph-qa-day6.zip"  # preferred upload name from `make zip`
 # Accept day1/day2/day3 zips and Drive's "name (1).zip" renames; newest mtime wins.
 ZIP_PATTERNS = (
     "patchgraph-qa-day*.zip",
@@ -414,8 +439,8 @@ MOUNT_HELP = "\n".join([
     "  1. Re-run this cell. In the Google popup pick your account and allow ALL requested",
     "     permissions ('Select all'); leaving some unticked makes the mount fail.",
     "  2. If it still fails: Runtime > Disconnect and delete runtime, then run all cells again.",
-    "  3. Or copy patchgraph-qa-day5.zip to /content by hand (Files sidebar), run",
-    "     !unzip -q -o /content/patchgraph-qa-day5.zip -d /content   then re-run this cell.",
+    "  3. Or copy patchgraph-qa-day6.zip to /content by hand (Files sidebar), run",
+    "     !unzip -q -o /content/patchgraph-qa-day6.zip -d /content   then re-run this cell.",
     "  4. Or set USE_UPLOAD = True at the top of this cell to use the browser upload instead.",
 ])
 
@@ -611,6 +636,7 @@ for t in tasks:
     g = pio.load_graph(gp)
     s = stats.graph_stats(g)
     cov = patch_parse.coverage_for_patch(g, t.patch)
+    recip = stats.edge_reciprocity(g)
     rows.append({
         "task": t.instance_id, "repo": t.repo, "nodes": s.n_nodes, "edges": s.n_edges,
         "edge_types": s.edge_types, "test_nodes": s.n_test_nodes, "async_nodes": s.n_async_nodes,
@@ -619,6 +645,7 @@ for t in tasks:
         "file_coverage": cov.file_coverage, "n_symbols": len(cov.symbols),
         "methods": dict(Counter(m.method for m in cov.symbols)),
         "unmatched_files": cov.unmatched_files,
+        "reciprocity": recip["reciprocity"], "n_recip_edges": recip["n_edges"],
     })
 
 print(f"graphs analysed: {len(rows)} / {len(tasks)} tasks")
@@ -636,6 +663,11 @@ all_types = Counter()
 for r in rows:
     all_types.update(r["edge_types"])
 print("edge types across all graphs:", dict(all_types))
+recips = [r["reciprocity"] for r in rows if r["n_recip_edges"]]
+print("edge reciprocity (fraction of directed typed pairs with reverse): "
+      f"min/median/max = {min(recips):.3f}/{float(np.median(recips)):.3f}/{max(recips):.3f} "
+      f"over {len(recips)} graphs" if recips else "n/a")
+print("note: loader does not invent reverse edges; high reciprocity is in the provided files.")
 """, "analysis")
 
 code(r"""
@@ -674,11 +706,16 @@ else:
     print("no embeddings file for", first.instance_id)
 """, "analysis")
 
-md("## 10 · First QA items (callers / callees / 2-hop callers, path exists)")
+md(r"""
+## 10 · First QA items (direction-aware templates + path_exists)
+
+If measured edge reciprocity ≥ 0.95, `callers`/`callees` collapse to undirected `neighbors` /
+`neighbors_2hop` (identical answers otherwise). `path_exists` stays directed. Empty
+`callers_2hop` on a reciprocal star hub is expected (leaves only touch the hub).
+""")
 
 code(r"""
-# Prefer a task whose gold patch already maps to symbols; fall back to structural anchors
-# (non-test nodes with call degree) so callers/callees items still appear on real graphs.
+# Prefer a task whose gold patch already maps to symbols; fall back to structural anchors.
 demo = first
 cov0 = patch_parse.coverage_for_patch(g0, first.patch)
 if not cov0.symbols:
@@ -690,16 +727,20 @@ if not cov0.symbols:
             print("section-10 demo task switched to", demo.instance_id, "(first had 0 patch anchors)")
             break
 anchors, anchor_source = patch_parse.select_anchors(g0, demo.patch)
+tmpls = questions.templates_for_graph(g0)
+recip0 = stats.edge_reciprocity(g0)
 print("anchor_source:", anchor_source)
 print("anchors:", [(m.node_id, m.method) for m in cov0.symbols][:10] if cov0.symbols else anchors[:10])
-items = questions.generate_items(g0, demo.instance_id, anchors)
+print(f"templates: {tmpls}  (reciprocity={recip0['reciprocity']:.3f})")
+items = questions.generate_items(g0, demo.instance_id, anchors)  # auto templates
 print(f"{len(items)} items")
-for it in items[:2]:
+for it in items[:3]:
     print("-" * 80)
     print(it.template, "| hops:", it.difficulty_hops, "| meta:", it.meta)
     print(it.question[:800])
     print("ANSWER:", it.answer)
-print("by template:", {t: sum(i.template == t for i in items) for t in questions.TEMPLATES})
+all_single = list(questions.TEMPLATES) + list(questions.RECIPROCAL_TEMPLATES)
+print("by template:", {t: sum(i.template == t for i in items) for t in all_single})
 
 # Yes/no reachability items: half reachable (>= 2 calls away), half not.
 pairs = questions.sample_path_pairs(g0, 10, seed=0)
@@ -712,10 +753,9 @@ for it in path_items[:1] + [i for i in path_items if i.answer == ["no"]][:1]:
 """, "analysis")
 
 md(r"""
-## 11 · Non-LLM baselines on the items above (oracle + embedding heuristic)
+## 11 · Non-LLM baselines on the demo items (oracle + embedding heuristic)
 
-Small sanity table for the writeup: graph oracle must score ~1.0; the embedding heuristic
-is a weak ceiling that ignores edges. Re-run after section 10 so `items` / `path_items` exist.
+Small sanity table for the writeup. Full-corpus numbers are in section 12.
 """)
 
 code(r"""
@@ -748,13 +788,10 @@ def _fmt(s):
 print("oracle     :", _fmt(oracle_scores))
 if emb_scores is not None:
     print("embedding  :", _fmt(emb_scores))
-# Per-template exact for the writeup table
-for tmpl in [*questions.TEMPLATES, questions.PATH_TEMPLATE]:
+for tmpl in sorted({it.template for it in all_qa}):
     subset = [it for it in all_qa if it.template == tmpl]
-    if not subset:
-        continue
     o = baselines.score_items(subset, [baselines.oracle_predict(it) for it in subset])
-    line = f"  {tmpl:<14} oracle_exact={o['exact']:.3f}"
+    line = f"  {tmpl:<16} oracle_exact={o['exact']:.3f}"
     if emb_scores is not None:
         e = baselines.score_items(
             subset,
@@ -765,8 +802,49 @@ for tmpl in [*questions.TEMPLATES, questions.PATH_TEMPLATE]:
     print(line)
 """, "analysis")
 
-md("## 12 · Checklist of unverified items (filled from measurements where possible)")
+md(r"""
+## 12 · Full corpus: JSONL over all tasks + baselines
 
+Caps: ≤3 anchors/task, ≤5 path pairs/task, deterministic seed. Writes
+`/content/patchgraph_qa_v0.jsonl` on Colab (or `./patchgraph_qa_v0.jsonl` locally).
+Embeddings load lazily per commit; missing `.npz` files are skipped and counted.
+""")
+
+code(r"""
+from patchgraph_qa import corpus
+
+OUT_JSONL = (WORK / "patchgraph_qa_v0.jsonl") if "WORK" in dir() else Path("patchgraph_qa_v0.jsonl")
+corpus_items, corpus_summary = corpus.build_corpus(
+    tasks, GRAPHS_DIR, max_anchors=3, path_pairs=5, seed=0
+)
+n_written = questions.write_jsonl(OUT_JSONL, corpus_items)
+print(f"wrote {n_written} items from {corpus_summary['n_graphs']} graphs -> {OUT_JSONL}")
+print("by template:", corpus_summary["by_template"])
+print("by repo:", corpus_summary["by_repo"])
+
+tasks_by_id = {t.instance_id: t for t in tasks}
+corpus_scores = corpus.score_corpus(
+    corpus_items,
+    graphs_dir=GRAPHS_DIR,
+    emb_dir=EMB_DIR,
+    tasks_by_id=tasks_by_id,
+)
+def _fmt(s):
+    return (f"exact={s['exact']:.3f}  f1={s['f1']:.3f}  "
+            f"P={s['precision']:.3f}  R={s['recall']:.3f}  n={int(s['n'])}")
+
+print("FULL oracle   :", _fmt(corpus_scores["oracle"]))
+print("FULL embedding:", _fmt(corpus_scores["embedding"]),
+      f"(emb files loaded={corpus_scores['n_emb_files_loaded']}, "
+      f"missing={corpus_scores['n_emb_files_missing']})")
+print("per template:")
+for tmpl, sc in sorted(corpus_scores["per_template"].items()):
+    o, e = sc["oracle"], sc["embedding"]
+    print(f"  {tmpl:<16} n={int(sc['n']):4d}  oracle_exact={o['exact']:.3f}  "
+          f"emb_exact={e['exact']:.3f}  emb_f1={e['f1']:.3f}")
+""", "analysis")
+
+md("## 13 · Checklist of unverified items (filled from measurements where possible)")
 
 code(r"""
 any_tests = any(r["test_nodes"] > 0 for r in rows)
@@ -775,6 +853,7 @@ gaps = sum(r["await_no_out_calls"] for r in rows)
 sizes = [r["nodes"] for r in rows]
 graph_bytes = sum(p.stat().st_size for p in GRAPHS_DIR.glob("*.json")) if GRAPHS_DIR else 0
 emb_bytes = sum(p.stat().st_size for p in EMB_DIR.glob("*.npz")) if EMB_DIR else 0
+recips = [r["reciprocity"] for r in rows if r.get("n_recip_edges")]
 
 checklist = [
     ("Embedding model that produced the 256-d vectors", "UNKNOWN - not documented; ask hosts"),
@@ -785,6 +864,10 @@ checklist = [
     ("Possible async gaps (await but no outgoing calls edge)",
      f"{gaps} nodes total - candidates only, not proof"),
     ("Edge types other than 'calls'", str(sorted(all_types))),
+    ("Edge reciprocity (reverse also present)",
+     (f"min/median/max={min(recips):.3f}/{float(np.median(recips)):.3f}/{max(recips):.3f}; "
+      "high => neighbors templates; loader does not add reverses")
+     if recips else "n/a"),
     ("Nodes carry file/line spans", "check 'node attribute keys' in section 6"),
     ("Graph size", f"nodes per graph min/median/max = {min(sizes)}/{int(np.median(sizes))}/"
                    f"{max(sizes)}" if sizes else "n/a"),
@@ -792,6 +875,8 @@ checklist = [
      f"{graph_bytes / 1e6:.1f} MB + {emb_bytes / 1e6:.1f} MB"),
     ("Kaggle mount path", str(DATA_ROOT)),
     ("Derived QA data may be published", "UNKNOWN - ask hosts in the paper-track forum"),
+    ("Full corpus JSONL", f"{OUT_JSONL} ({corpus_summary.get('n_items', '?')} items)"
+     if "corpus_summary" in dir() else "run section 12"),
 ]
 for item, status in checklist:
     print(f"[ ] {item:<55} -> {status}")

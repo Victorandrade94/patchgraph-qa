@@ -11,21 +11,21 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from patchgraph_qa import corpus, questions  # noqa: E402
 from patchgraph_qa import io as pio  # noqa: E402
-from patchgraph_qa import patch_parse, questions  # noqa: E402
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", type=Path, required=True, help="Output JSONL path")
     ap.add_argument("--max-tasks", type=int, default=None, help="Optional cap for a smoke subset")
-    ap.add_argument("--path-pairs", type=int, default=10, help="path_exists pairs per graph")
+    ap.add_argument("--max-anchors", type=int, default=3)
+    ap.add_argument("--path-pairs", type=int, default=5, help="path_exists pairs per graph")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
@@ -42,23 +42,17 @@ def main() -> int:
     if args.max_tasks is not None:
         tasks = tasks[: args.max_tasks]
 
-    items: list[questions.QAItem] = []
-    n_graphs = 0
-    for t in tasks:
-        gp = pio.graph_path(graphs_dir, t)
-        if not gp.exists():
-            continue
-        g = pio.load_graph(gp)
-        n_graphs += 1
-        anchors, _src = patch_parse.select_anchors(g, t.patch)
-        items.extend(questions.generate_items(g, t.instance_id, anchors))
-        pairs = questions.sample_path_pairs(g, args.path_pairs, seed=args.seed)
-        items.extend(questions.generate_path_items(g, t.instance_id, pairs))
-
+    items, summary = corpus.build_corpus(
+        tasks,
+        graphs_dir,
+        max_anchors=args.max_anchors,
+        path_pairs=args.path_pairs,
+        seed=args.seed,
+    )
     n = questions.write_jsonl(args.out, items)
-    by_t = Counter(i.template for i in items)
-    print(f"wrote {n} items from {n_graphs} graphs -> {args.out}")
-    print("by template:", dict(by_t))
+    print(f"wrote {n} items from {summary['n_graphs']} graphs -> {args.out}")
+    print("by template:", summary["by_template"])
+    print("by repo:", summary["by_repo"])
     return 0
 
 

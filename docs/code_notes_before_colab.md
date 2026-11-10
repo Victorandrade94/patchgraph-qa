@@ -30,3 +30,11 @@
 - Anchor bug: `docs_src.pkg...` module path vs node ids `pkg...`; `module_matches_node` suffix match + `select_anchors` structural fallback.
 - Section 10 now switches demo task if first has 0 patch symbols; §11 baselines; checklist renumbered to §12.
 - Verified: 129/129 graphs, nodes 711/3250/4597, calls-only, mean cov 0.827, emb (256,) float32.
+
+## 2026-11-09 day-6
+
+- Loader does **not** add reverse edges; high reciprocity is in the competition files.
+- templates_for_graph: reciprocity ≥ 0.95 → neighbors / neighbors_2hop; else callers/callees/callers_2hop.
+- callers_2hop empty on reciprocal star hub = expected; leaf neighbors_2hop reaches other leaves.
+- Download: skip kaggle+pause when files on disk; listing skipped when graphs already present.
+- §12 full corpus JSONL + lazy embedding baselines (`patchgraph_qa.corpus`).

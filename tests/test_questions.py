@@ -126,4 +126,3 @@ def test_write_jsonl(tmp_path, g):
     lines = path.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == len(items)
     assert json.loads(lines[0])["task_id"] == "pkg_1"
-

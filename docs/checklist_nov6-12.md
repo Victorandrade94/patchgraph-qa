@@ -6,7 +6,7 @@ Scope: Best New Resource writeup ≤3000 words. Gemma E2B optional.
 
 Legend: `[ ]` todo · `[x]` done · `(V)` needs Víctor · `(K)` needs Ken/agent locally
 
-**Remaining TODOs (after 2026-11-09 real-data run):** baseline numbers (oracle/embedding), embedding model identity, publishability (forum ask), JSONL export counts, writeup v1.
+**Remaining TODOs:** full §12 corpus baseline table, reciprocity min/median/max, embedding model identity, publishability (forum ask), writeup v1.
 
 ---
 
@@ -27,7 +27,9 @@ Legend: `[ ]` todo · `[x]` done · `(V)` needs Víctor · `(K)` needs Ken/agent
 - [x] (V) Put `patchgraph-qa-day4.zip` in Drive; download completed (nested CLI path quirk noted)
 - [x] (V) Run All on notebook 01 — sections 8–11 pasted (129/129 graphs; mean cov 0.827)
 - [x] (K) Fix anchor `docs_src` mismatch + nested download flatten + baselines cell → day5 zip
-- [ ] (V) Re-run notebook from §4 (or Run All) with **day5** zip; paste §10–12 (QA + baselines + checklist)
+- [x] (V) Day-5 Colab: demo fastapi_15588; callers≡callees; baselines 11 items; cov 0.825
+- [x] (K) Day-6: reciprocity/neighbors templates, fast download, full §12 corpus export
+- [ ] (V) Upload **day6** zip; Run All (download should skip); paste §8 reciprocity + §10–13
 - [ ] (V) Paste section-12 checklist into a note or `docs/real_data_checklist_nov9.md`
 - [ ] (V) Post `docs/forum_publishability_ask.md` on the **paper-track** forum (after a quick personal read)
 - [ ] (K) Fill README “Unverified facts” from those outputs once Víctor shares them

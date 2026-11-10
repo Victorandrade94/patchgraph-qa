@@ -76,10 +76,20 @@ def test_analysis_cells_run_on_synthetic_data(data_dir, monkeypatch):
     plt.close("all")
     assert ns["DATA_ROOT"] == data_dir
     assert len(ns["rows"]) == 1 and ns["rows"][0]["file_coverage"] == 1.0
-    assert ns["items"] and ns["items"][0].template == "callers"
+    assert "reciprocity" in ns["rows"][0]
+    assert ns["items"]  # directed fixture => callers/callees (low reciprocity)
+    assert ns["items"][0].template in (
+        "callers",
+        "callees",
+        "callers_2hop",
+        "neighbors",
+        "neighbors_2hop",
+    )
     assert ns["anchor_source"] == "patch"
     assert ns["oracle_scores"]["exact"] == 1.0
+    assert ns["corpus_summary"]["n_items"] == len(ns["corpus_items"]) > 0
     assert any("Embedding model" in item for item, _ in ns["checklist"])
+    assert any("reciprocity" in item.lower() for item, _ in ns["checklist"])
 
 
 def _install_helpers(tmp_path: Path, marker: str = "def find_zip") -> dict:
@@ -185,6 +195,30 @@ def test_download_cell_builds_commit_names_and_unzips(data_dir, tmp_path):
     # Already on disk: skipped without calling the CLI.
     ns["kaggle_cli"] = lambda *a: pytest.fail("should not download again")
     assert ns["download_one"](names[0], tmp_path / "dl" / "graphs") == out
+
+
+def test_download_all_skips_kaggle_when_present(tmp_path, capsys):
+    ns = _install_helpers(tmp_path, marker="def names_from_tasks")
+    data = tmp_path / "data"
+    (data / "graphs").mkdir(parents=True)
+    (data / "embeddings").mkdir()
+    (data / "graphs" / "a.json").write_text("{}")
+    (data / "embeddings" / "a.npz").write_bytes(b"x")
+    ns.update(
+        kaggle_cli=lambda *a, **k: (_ for _ in ()).throw(AssertionError("no kaggle")),
+        SLEEP=lambda s: (_ for _ in ()).throw(AssertionError("no sleep")),
+        SLUG="slug",
+    )
+    missing = ns["download_all"](["graphs/a.json", "embeddings/a.npz"], data)
+    assert missing == []
+    out = capsys.readouterr().out
+    assert "skip download" in out
+
+
+def test_listing_cell_skips_when_graphs_present(tmp_path):
+    cell = next(c for c in _code_cells() if "Skipping competition file listing" in c.source)
+    assert "timeout" in cell.source
+    assert "n_graphs > 0" in cell.source
 
 
 def test_download_flattens_nested_cli_layout(tmp_path):

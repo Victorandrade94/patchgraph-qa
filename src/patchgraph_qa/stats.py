@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -108,6 +109,35 @@ def async_text_diagnostics(graph: nx.Graph, n_examples: int = 3) -> dict[str, An
 def has_await(attrs: dict[str, Any]) -> bool:
     """Heuristic: an async function node whose body contains ``await <name>``."""
     return is_async_node(attrs) and bool(_AWAIT_RE.search(str(attrs.get("text", ""))))
+
+
+def edge_reciprocity(
+    graph: nx.Graph, edge_types: Iterable[str] | None = ("calls",)
+) -> dict[str, float | int]:
+    """Fraction of directed typed edges whose reverse edge also exists.
+
+    Self-loops are ignored. ``reciprocity`` is 0 when there are no eligible edges.
+    This is a *measurement* of the provided graph, not a claim about how it was built.
+    """
+    if not graph.is_directed():
+        return {"n_edges": 0, "n_reciprocated": 0, "reciprocity": 0.0}
+    allowed = set(edge_types) if edge_types is not None else None
+    # Pair set ignores parallel-edge keys: one (u,v) counts once if any typed edge exists.
+    pairs: set[tuple[str, str]] = set()
+    for u, v, d in graph.edges(data=True):
+        if u == v:
+            continue
+        if allowed is not None and d.get("type") not in allowed:
+            continue
+        pairs.add((str(u), str(v)))
+    if not pairs:
+        return {"n_edges": 0, "n_reciprocated": 0, "reciprocity": 0.0}
+    n_rec = sum(1 for u, v in pairs if (v, u) in pairs)
+    return {
+        "n_edges": len(pairs),
+        "n_reciprocated": n_rec,
+        "reciprocity": n_rec / len(pairs),
+    }
 
 
 def edge_type_counts(graph: nx.Graph, key: str = "type") -> Counter[str]:
