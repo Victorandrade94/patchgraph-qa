@@ -64,13 +64,13 @@ You must have joined the competition and accepted its rules. **Never commit or s
 New notebook → *Add Input* → Competition → `gemma-4-developer-agent`. The notebook auto-detects
 `/kaggle/input/gemma-4-developer-agent/` and `/kaggle/input/competitions/gemma-4-developer-agent/`
 (which one Kaggle uses is unverified). To install this package there, upload
-`patchgraph-qa-day7.zip` (or any `patchgraph-qa-day*.zip`) as a private Kaggle Dataset and add it as an input too.
+`patchgraph-qa-day8.zip` (or any `patchgraph-qa-day*.zip`) as a private Kaggle Dataset and add it as an input too.
 
 **Option B: Google Colab.**
 1. kaggle.com → Settings → **API Tokens** → create a token.
 2. In Colab, key icon → add secret **`KAGGLE_API_TOKEN`** with the token, and enable notebook access.
-3. Put `patchgraph-qa-day7.zip` (or any `patchgraph-qa-day*.zip`) in Google Drive → My Drive (up to 3 folders deep; if there are
-   several `patchgraph-qa-day1*.zip`, the most recently modified one is used). Open
+3. Put `patchgraph-qa-day8.zip` (or any `patchgraph-qa-day*.zip`) in Google Drive → My Drive (up to 3 folders deep; if there are
+   several `patchgraph-qa-day*.zip`, the most recently modified one is used). Open
    `notebooks/01_explore_graphs.ipynb` and run all cells: it mounts Drive, finds and extracts the
    zip (browser upload is only a last-resort fallback), and adds `src/` to `sys.path` so no
    runtime restart is needed. If the Drive mount fails, the cell prints what to do and stops
@@ -126,4 +126,4 @@ list with `patchgraph_qa.io.download_names(tasks)`). Point the code at it with
 
 ## License
 
-Code: not chosen yet (pick one before publishing, e.g. Apache-2.0 or MIT). Competition data: governed by the competition rules (not redistributed here).
+Code: Apache-2.0 (see LICENSE). Competition data: governed by the competition rules (not redistributed here).
