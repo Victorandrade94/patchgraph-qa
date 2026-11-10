@@ -11,3 +11,6 @@ data/*
 !data/README.md
 kaggle.json
 .kaggle/
+
+# Derived QA outputs remain private pending host permission.
+*.jsonl
