@@ -141,7 +141,7 @@ Embedding similarity alone is a weak substitute for graph structure on neighborh
 | Splits | None frozen; natural split by repo / commit |
 | License (code) | Apache-2.0 (generator, notebook, tests) |
 | License (data) | Competition rules; **derived JSONL redistribution pending host forum answer** |
-| Code | `<GITHUB_URL>` (local until pushed) |
+| Code | https://github.com/Victorandrade94/patchgraph-qa |
 | Derived dataset | `<KAGGLE_DATASET_URL>` (publish only after host OK) |
 | Risks | Graph incompleteness; reciprocity; fastapi-heavy mix; leakage if raw graphs shipped |
 | Contact | Víctor Andrade / Kaggle Paper Track writeup |
