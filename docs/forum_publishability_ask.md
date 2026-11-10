@@ -16,7 +16,7 @@ May we publish a derived PatchGraph-QA JSONL (graph-relative Q&A) for the Paper 
 
 Hi hosts — thanks for the competition and the code-graph tools.
 
-I’m preparing a **Best New Resource** Paper Track writeup for **PatchGraph-QA**: a small, verifiable question–answer set generated from the competition code graphs (templates such as callers / callees / 2-hop callers / path_exists). Answers are computed with NetworkX from the **provided graphs** (explicitly “correct w.r.t. the graph,” including known async limitations). Items are anchored on symbols touched by each task’s gold patch.
+I’m preparing a **Best New Resource** Paper Track writeup for **PatchGraph-QA**: a small, verifiable question–answer set generated from the competition code graphs (templates such as neighbors / neighbors_2hop / path_exists). Answers are computed with NetworkX from the **provided graphs** (explicitly “correct w.r.t. the graph,” including known async limitations). Items are anchored on symbols touched by each task’s gold patch.
 
 Competition rules forbid redistributing Competition Data to non-participants. Before I ship anything public, could you please clarify what is allowed?
 
