@@ -9,8 +9,10 @@ dist/
 # Competition data: Kaggle rules forbid redistributing it. Never commit it.
 data/*
 !data/README.md
+!data/patchgraph_qa_items.jsonl
 kaggle.json
 .kaggle/
 
-# Derived QA outputs remain private pending host permission.
+# Ignore other JSONL (local exports, competition tasks.jsonl).
 *.jsonl
+!data/patchgraph_qa_items.jsonl

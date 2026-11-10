@@ -123,7 +123,7 @@ Embedding similarity alone is a weak substitute for graph structure on neighborh
 - **Reciprocal edges.** Every provided `calls` edge has its reverse, so callers ≡ callees; do not read neighbor sets as directed call polarity.
 - **No file/line spans** on nodes; mean patch→symbol coverage is 0.825 via `name`/`text`.
 - **Undocumented embedding model** for the 256-d vectors.
-- **Publishability** of derived JSONL needs an explicit host OK. Competition rules forbid redistributing Competition Data to non-participants.
+- **Host-approved derived data.** The competition host authorized publishing the derived QA items provided each item links to its source task via `task_id` metadata ([forum reply](https://www.kaggle.com/competitions/gemma-4-developer-agent-paper/discussion/757562#3553006)). The 613 items are in `data/patchgraph_qa_items.jsonl`. We do not redistribute raw competition graphs, embeddings, patches, or snapshots.
 - **Repo imbalance.** fastapi accounts for 405/613 items.
 - Heuristic test/async detection can err; answers are not “semantic” beyond the graph.
 
@@ -140,13 +140,13 @@ Embedding similarity alone is a weak substitute for graph structure on neighborh
 | Labels | Algorithmic (NetworkX), not human |
 | Splits | None frozen; natural split by repo / commit |
 | License (code) | Apache-2.0 (generator, notebook, tests) |
-| License (data) | Competition rules; **derived JSONL redistribution pending host forum answer** |
+| License (data) | Host-approved derived JSONL; raw competition files remain under the competition rules and are not redistributed |
 | Code | https://github.com/Victorandrade94/patchgraph-qa |
-| Derived dataset | `<KAGGLE_DATASET_URL>` (publish only after host OK) |
+| Derived dataset | https://github.com/Victorandrade94/patchgraph-qa/blob/main/data/patchgraph_qa_items.jsonl |
 | Risks | Graph incompleteness; reciprocity; fastapi-heavy mix; leakage if raw graphs shipped |
 | Contact | Víctor Andrade / Kaggle Paper Track writeup |
 
-Anyone with competition access can regenerate the 613 items deterministically from the generator (`scripts/export_qa_v0.py` + notebook `01_explore_graphs.ipynb`). We do **not** ship raw `graphs/`, embeddings, patches, or snapshots.
+The derived items are released in `data/patchgraph_qa_items.jsonl`. Anyone with competition access can also regenerate them deterministically from the generator (`scripts/export_qa_v0.py` + notebook `01_explore_graphs.ipynb`). We do **not** ship raw `graphs/`, embeddings, patches, or snapshots.
 
 ### Reproducibility
 
@@ -191,7 +191,7 @@ make install && make test
 
 ## Appendix — Open host questions
 
-1. May participants publish a **derived** PatchGraph-QA JSONL (questions + graph-relative answers + metadata) without raw graphs/embeddings/snapshots?  
+1. May participants publish a **derived** PatchGraph-QA JSONL (questions + graph-relative answers + metadata) without raw graphs/embeddings/snapshots? **Answered 2026-11-10:** yes, if each item links to its source task via `task_id` ([forum reply](https://www.kaggle.com/competitions/gemma-4-developer-agent-paper/discussion/757562#3553006)).  
 2. Which model produced the 256-d embeddings?  
 3. Preferred Kaggle mount path for the competition input?
 
@@ -201,3 +201,4 @@ make install && make test
 - **2026-11-09** — Colab stats; reciprocity → neighbors templates; full-corpus baselines (n=613).  
 - **2026-11-09 (late)** — related-work citations, Apache-2.0, availability/data card, word-count polish for submission.
 - **2026-11-10** — official competition citation; repository made public (code only, no derived data).
+- **2026-11-10** — released derived QA items (`data/patchgraph_qa_items.jsonl`, n=613) after host approval; items linked by `task_id`.
