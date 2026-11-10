@@ -73,7 +73,8 @@ def score_items(
     items: Sequence[QAItem],
     predictions: Sequence[Sequence[str]],
 ) -> dict[str, float]:
-    """Macro-average exact / precision / recall / F1 over items (boolean treated as 1-element sets)."""
+    """Macro-average exact / precision / recall / F1 over items
+    (boolean treated as 1-element sets)."""
     if len(items) != len(predictions):
         raise ValueError("items and predictions must have the same length")
     if not items:

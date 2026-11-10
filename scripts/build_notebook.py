@@ -811,6 +811,8 @@ Embeddings load lazily per commit; missing `.npz` files are skipped and counted.
 """)
 
 code(r"""
+from pathlib import Path
+
 from patchgraph_qa import corpus
 
 OUT_JSONL = (WORK / "patchgraph_qa_v0.jsonl") if "WORK" in dir() else Path("patchgraph_qa_v0.jsonl")
